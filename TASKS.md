@@ -31,7 +31,7 @@ Resolve these decisions before connecting payments, publishing content, or colle
 
 ## Phase 1 — Make the Android foundation dependable
 
-- [x] Sync and build the starter project; align the Gradle wrapper with AGP 9.4 and resolve the Kotlin compile error.
+- [x] Sync and build the starter project; align AGP 9.2.1 with Gradle 9.4.1 and resolve the Kotlin compile error.
 - [ ] Choose the initial package/module boundaries for app shell, design system, and independent features.
 - [ ] Establish navigation, back behavior, loading, empty, error, and offline UI states.
 - [ ] Move reusable colors, typography, spacing, buttons, fields, cards, and motion into the shared design system.
