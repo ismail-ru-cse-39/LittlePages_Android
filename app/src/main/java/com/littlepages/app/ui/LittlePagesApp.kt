@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -266,7 +267,7 @@ private fun BookDetailsScreen(book: Book, onBack: () -> Unit, onRead: () -> Unit
         Text("A story about kindness, courage, and finding your voice. Follow a curious little fox as a new adventure leads to an unexpected friendship.", color = PagesColors.Muted, style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(16.dp)); ChipRow(listOf("Animals", "Courage", "Friendship", "Nature"))
         Spacer(Modifier.height(22.dp))
-        PrimaryButton("Read in app", Icons.Filled.MenuBook, onRead)
+        PrimaryButton("Read in app", Icons.AutoMirrored.Filled.MenuBook, onRead)
         Spacer(Modifier.height(10.dp))
         OutlineButton("Listen and read along · Premium", Icons.Filled.Headphones, onListen)
         Spacer(Modifier.height(18.dp))
@@ -304,7 +305,7 @@ private fun ReaderScreen(book: Book, mode: String, onMode: (String) -> Unit, onB
             IconButton(onClick = {}) { Icon(Icons.Filled.ChevronLeft, "Previous page", tint = PagesColors.Forest) }
             Text("8 / 24", fontWeight = FontWeight.SemiBold)
             TextButton(onClick = { onMode(if (mode == "Page turn") "Scroll" else "Page turn") }) { Text(mode, color = PagesColors.Forest) }
-            Surface(shape = RoundedCornerShape(24.dp), color = PagesColors.Forest, modifier = Modifier.clickable(onClick = onListen)) { Row(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.VolumeUp, null, tint = Color.White, modifier = Modifier.size(18.dp)); Text(" Listen", color = Color.White, fontWeight = FontWeight.SemiBold) } }
+            Surface(shape = RoundedCornerShape(24.dp), color = PagesColors.Forest, modifier = Modifier.clickable(onClick = onListen)) { Row(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.AutoMirrored.Filled.VolumeUp, null, tint = Color.White, modifier = Modifier.size(18.dp)); Text(" Listen", color = Color.White, fontWeight = FontWeight.SemiBold) } }
             IconButton(onClick = {}) { Icon(Icons.Filled.ChevronRight, "Next page", tint = PagesColors.Forest) }
         }
         Spacer(Modifier.height(10.dp))
@@ -358,7 +359,7 @@ private fun GroupScreen(onBack: () -> Unit, onCreatePost: () -> Unit) {
         CommunityPost("Priya Sharma", "3 days ago", "How do you talk to your kids about kindness when it’s hard? We read books that show different perspectives and then chat at bedtime.", "", {})
         CommunityPost("James Carter", "2 days ago", "We use the ‘kind choices’ language after reading together. It gives our son a simple way to reflect.", "", {})
         OutlineButton("Start a discussion", Icons.Filled.Edit, onCreatePost)
-        OutlinedTextField(value = "", onValueChange = {}, placeholder = { Text("Write a reply…") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), trailingIcon = { IconButton(onClick = {}) { Icon(Icons.Filled.Send, "Send reply", tint = PagesColors.Forest) } })
+        OutlinedTextField(value = "", onValueChange = {}, placeholder = { Text("Write a reply…") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), trailingIcon = { IconButton(onClick = {}) { Icon(Icons.AutoMirrored.Filled.Send, "Send reply", tint = PagesColors.Forest) } })
     }
 }
 
@@ -370,7 +371,7 @@ private fun CreatePostScreen(onBack: () -> Unit, onPost: () -> Unit) {
         OutlinedTextField(value = post, onValueChange = { post = it }, placeholder = { Text("What would you like to share?") }, modifier = Modifier.fillMaxWidth().height(190.dp), shape = RoundedCornerShape(20.dp))
         CardSurface(Modifier.fillMaxWidth().clickable { }, color = PagesColors.Sky) { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.AddPhotoAlternate, null, tint = PagesColors.Forest); Text("  Add a family-friendly photo", fontWeight = FontWeight.SemiBold); Spacer(Modifier.weight(1f)); Icon(Icons.Filled.ChevronRight, null) } }
         Text("Please keep children’s personal details private. Posts are visible to community members.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
-        PrimaryButton("Publish post", Icons.Filled.Send, onPost)
+        PrimaryButton("Publish post", Icons.AutoMirrored.Filled.Send, onPost)
     }
 }
 
@@ -406,10 +407,10 @@ private fun ParentScreen(language: String, onLanguage: (String) -> Unit, onProfi
         SectionTitle("Your account")
         SettingsRow(Icons.Filled.Language, "Language", language, { onLanguage(if (language == "English") "বাংলা" else "English") })
         SettingsRow(Icons.Filled.CloudDownload, "Offline books", "Manage saved stories", onOffline)
-        SettingsRow(Icons.Filled.ReceiptLong, "Orders", "View purchases and delivery", onOrders)
+        SettingsRow(Icons.AutoMirrored.Filled.ReceiptLong, "Orders", "View purchases and delivery", onOrders)
         SettingsRow(Icons.Filled.SupportAgent, "Help and support", "We’re here to help", onSupport)
         SettingsRow(Icons.Filled.PrivacyTip, "Privacy and safety", "Family controls", {})
-        SettingsRow(Icons.Filled.Logout, "Sign out", "", {})
+        SettingsRow(Icons.AutoMirrored.Filled.Logout, "Sign out", "", {})
     }
 }
 
@@ -463,7 +464,7 @@ private fun CheckoutScreen(book: Book, onBack: () -> Unit, onComplete: () -> Uni
 private fun OrdersScreen(onBack: () -> Unit) {
     PageScaffold(onBack, "Your orders") {
         CardSurface(Modifier.fillMaxWidth()) { Row(verticalAlignment = Alignment.CenterVertically) { Text("📦", fontSize = 28.sp); Column(Modifier.weight(1f).padding(start = 12.dp)) { Text("The Brave Little Fox · Print", fontWeight = FontWeight.Bold); Text("Order LP-1048 · Placed 10 Oct", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }; Text("On the way", color = PagesColors.Forest, fontWeight = FontWeight.SemiBold) } }
-        CardSurface(Modifier.fillMaxWidth()) { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.MenuBook, null, tint = PagesColors.Forest); Column(Modifier.padding(start = 12.dp)) { Text("A Day at the Lake · PDF", fontWeight = FontWeight.Bold); Text("In-app reading access", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }; Spacer(Modifier.weight(1f)); Text("Ready", color = PagesColors.Forest) } }
+        CardSurface(Modifier.fillMaxWidth()) { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.AutoMirrored.Filled.MenuBook, null, tint = PagesColors.Forest); Column(Modifier.padding(start = 12.dp)) { Text("A Day at the Lake · PDF", fontWeight = FontWeight.Bold); Text("In-app reading access", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }; Spacer(Modifier.weight(1f)); Text("Ready", color = PagesColors.Forest) } }
     }
 }
 
@@ -477,7 +478,7 @@ private fun SupportScreen(onBack: () -> Unit) {
         SectionTitle("Contact us")
         OutlinedTextField("", {}, label = { Text("Your email") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), singleLine = true)
         OutlinedTextField("", {}, label = { Text("How can we help?") }, modifier = Modifier.fillMaxWidth().height(130.dp), shape = RoundedCornerShape(16.dp))
-        PrimaryButton("Send support request", Icons.Filled.Send, {})
+        PrimaryButton("Send support request", Icons.AutoMirrored.Filled.Send, {})
         Text("If a download or payment fails, your order and reading progress remain safe while we resolve it.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
     }
 }
@@ -513,7 +514,7 @@ private fun MainPage(title: String, subtitle: String, action: (@Composable () ->
 private fun PageScaffold(onBack: () -> Unit, title: String, action: (@Composable () -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp)) {
         Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack, modifier = Modifier.size(42.dp)) { Icon(Icons.Filled.ArrowBack, "Back", tint = PagesColors.Ink) }
+            IconButton(onClick = onBack, modifier = Modifier.size(42.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = PagesColors.Ink) }
             Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             action?.invoke()
         }
@@ -545,7 +546,7 @@ private fun PrimaryButton(text: String, icon: androidx.compose.ui.graphics.vecto
 
 @Composable
 private fun OutlineButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector?, onClick: () -> Unit) {
-    OutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp), shape = RoundedCornerShape(16.dp), border = ButtonDefaults.outlinedButtonBorder.copy(width = 1.dp), contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp)) {
+    OutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp), shape = RoundedCornerShape(16.dp), contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp)) {
         if (icon != null) { Icon(icon, null, tint = PagesColors.Forest, modifier = Modifier.size(19.dp)); Spacer(Modifier.width(9.dp)) }
         Text(text, color = PagesColors.Ink, fontWeight = FontWeight.SemiBold)
     }
@@ -581,7 +582,7 @@ private fun ChipRow(labels: List<String>) {
 @Composable
 private fun BookCover(book: Book, modifier: Modifier = Modifier) {
     Box(modifier.clip(RoundedCornerShape(16.dp)).background(Brush.verticalGradient(listOf(book.tint, PagesColors.Cream))), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) { Text(book.emoji, fontSize = 44.sp); Text(book.title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, color = PagesColors.Ink, modifier = Modifier.padding(horizontal = 7.dp, top = 3.dp)) }
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) { Text(book.emoji, fontSize = 44.sp); Text(book.title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, color = PagesColors.Ink, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)) }
     }
 }
 
