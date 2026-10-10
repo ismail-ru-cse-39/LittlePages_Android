@@ -8,7 +8,8 @@ Use the checkboxes below as the project tracker. Mark a task complete only when 
 
 - [x] Android project scaffold and Compose app shell created.
 - [x] UI prototype drafted for account entry, library, book details, reader, read-along, parent community, and supporting account/order screens.
-- [ ] Prototype build and device review completed.
+- [x] Debug APK build verified successfully.
+- [ ] Emulator/device review completed.
 - [ ] Backend, authentication, real book content, payments, and moderation connected.
 
 The current screens use sample data and in-memory navigation. They do not authenticate users, store or play books, upload images, or process orders or payments.
@@ -18,26 +19,26 @@ The current screens use sample data and in-memory navigation. They do not authen
 Resolve these decisions before connecting payments, publishing content, or collecting child information.
 
 - [ ] Confirm the launch book catalogue, distribution rights, and who supplies English and Bangla content.
-- [ ] Confirm the PDF offer: eligible users can read it in-app; no user can download or export the PDF.
+- [x] Confirm the PDF offer: all customers read PDFs in-app; downloading/exporting is disabled.
 - [ ] Define offline-book rules, including eligibility, storage limits, access expiry, and removal after access ends.
 - [ ] Confirm which features are free and which require Premium, including what happens when a subscription expires.
-- [ ] Confirm launch payment providers and the purchase flow for digital subscriptions, in-app book access, and physical books.
+- [x] Record requested Bangladesh methods: bKash and Visa. Digital purchase flow still needs Play policy/provider review in Phase 6.
 - [ ] Define physical-book regions, stock handling, delivery fees, fulfillment, cancellation, and refund rules.
 - [ ] Decide parent consent, minimum data collection, account/data deletion, and child-profile requirements.
 - [ ] Define community rules, image restrictions, reporting, blocking, moderation response, and group ownership.
-- [ ] Confirm launch languages: English and Bangla for app UI and the catalogue.
+- [x] Confirm launch languages: English and Bangla for app UI and the catalogue.
 
 **Done when:** decisions are written down and product, content, payment, privacy, and fulfillment owners agree on them.
 
 ## Phase 1 — Make the Android foundation dependable
 
 - [x] Sync and build the starter project; align AGP 9.2.1 with Gradle 9.4.1 and resolve the Kotlin compile error.
-- [ ] Choose the initial package/module boundaries for app shell, design system, and independent features.
+- [x] Choose initial app/core/feature/data package boundaries; see `ARCHITECTURE.md` (migration from prototype is pending).
 - [ ] Establish navigation, back behavior, loading, empty, error, and offline UI states.
 - [ ] Move reusable colors, typography, spacing, buttons, fields, cards, and motion into the shared design system.
 - [ ] Add English/Bangla font and layout support, including Bangla line height and text expansion.
 - [ ] Set accessibility behavior for scalable text, screen readers, contrast, touch targets, and reduced motion.
-- [ ] Add environment configuration for local development, staging, and production without committing secrets.
+- [ ] Add environment configuration for local development, staging, and production without committing secrets. Blocked on Firebase project/app registrations and provider configuration; secret-handling conventions are documented in `ARCHITECTURE.md`.
 
 **Done when:** the app starts on supported Android devices, navigation is consistent, and feature screens use shared components rather than private styling.
 
@@ -54,7 +55,7 @@ Resolve these decisions before connecting payments, publishing content, or colle
 - [ ] Finish Home, Library, Search/Filters, Book Details, and Reviews screens.
 - [ ] Add book detail states for unavailable, free, Premium, PDF in-app, and physical editions.
 - [ ] Finish the page-turn and continuous-scroll reader controls.
-- [ ] Add the Reader **Listen** action and reusable gentle Premium upsell dialog.
+- [x] Add the Reader **Listen** action and reusable gentle Premium upsell dialog (prototype interaction; subscription is not connected).
 - [ ] Finish Read Along controls: word highlight, play/pause, seek, voice, speed, and Autoplay pages.
 - [ ] Add automatic resume, manual bookmarks, and per-child progress UI.
 - [ ] Finish Offline Books list, storage status, remove-book flow, and sync status.
@@ -145,10 +146,12 @@ Resolve these decisions before connecting payments, publishing content, or colle
 
 Keep this section current as work proceeds:
 
-- **Current phase:** Phase 0 — Confirm product rules
-- **Next task:** Confirm content and payment decisions with the product owner.
-- **Blockers:** None recorded.
-- **Decision log:** Record date, decision, owner, and affected task IDs here.
+- **Current phase:** Phase 1/2 — Prototype flow completion and foundation
+- **Next task:** Finish the local prototype states, then connect approved backend services.
+- **Blockers:** Firebase project IDs and app registrations; content catalogue and distribution rights; offline eligibility/expiry policy; free/Premium entitlements; privacy/parent-consent/data-retention approval; physical fulfillment terms; approved moderation rules; applicable digital billing flow. These need owner or external-service input and remain unchecked.
+- **Completed in this pass:** reader page buttons and in-session bookmark toggle; read-along play/pause, seek, speed selection, autoplay toggle, and settings dialog; subscription/checkout no longer fake successful purchases; initial architecture boundaries; Firebase schema draft and deny-all client rules; successful debug APK build.
+- **Important limit:** reader position/bookmark and read-along controls are still prototype-only in-memory state. No narration audio, word timing, durable offline storage, auth, payment, or Firebase service is connected.
+- **Decision log (2026-10-11):** English and Bangla are launch languages. PDFs are in-app only for every customer, including Premium. Premium narration/word highlighting is a subscription feature. When a physical edition is available, offer both in-app PDF access and the printed book. Requested Bangladesh payment methods are bKash and Visa. Offline access is required; entitlement, expiry, and storage policy remain open.
 
 ### Task update convention
 
@@ -161,5 +164,8 @@ Keep this section current as work proceeds:
 - `app/src/main/java/com/littlepages/app/MainActivity.kt`: Android entry point
 - `app/src/main/java/com/littlepages/app/ui/theme/Theme.kt`: shared color palette and Compose theme
 - `app/src/main/java/com/littlepages/app/ui/LittlePagesApp.kt`: current app shell, route state, UI prototype screens, and reusable components
+- `ARCHITECTURE.md`: initial boundaries and platform expansion decisions
+- `firebase/SCHEMA.md`: proposed shared backend data contract; no Firebase project is connected
+- `firebase/firestore.rules`, `firebase/storage.rules`: deny-all starter rules until reviewed production rules exist
 
 As feature implementation grows, split the prototype into feature packages and extract independent Gradle modules when that separation reduces coupling or makes parallel development easier.

@@ -49,11 +49,14 @@ fun LittlePagesApp() {
     val stack = remember { mutableStateListOf(Page.Welcome) }
     var premium by remember { mutableStateOf(false) }
     var premiumPrompt by remember { mutableStateOf(false) }
+    var unavailableNotice by remember { mutableStateOf<String?>(null) }
     var selectedBook by remember { mutableStateOf(books.first()) }
     var query by remember { mutableStateOf("") }
     var selectedLanguage by remember { mutableStateOf("English") }
     var autoplay by remember { mutableStateOf(true) }
     var readerMode by remember { mutableStateOf("Page turn") }
+    var currentPage by remember { mutableIntStateOf(8) }
+    var bookmarked by remember { mutableStateOf(false) }
     val page = stack.last()
     fun go(next: Page) { stack.add(next) }
     fun back() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
@@ -103,7 +106,7 @@ fun LittlePagesApp() {
                 Page.Library -> LibraryScreen(onBook = { selectedBook = it; go(Page.BookDetails) }, onSearch = { go(Page.Search) }, onOffline = { go(Page.Offline) })
                 Page.Search -> SearchScreen(query = query, onQuery = { query = it }, onBook = { selectedBook = it; go(Page.BookDetails) }, onBack = ::back)
                 Page.BookDetails -> BookDetailsScreen(book = selectedBook, onBack = ::back, onRead = { go(Page.Reader) }, onListen = ::openPremiumFeature, onReviews = { go(Page.Reviews) }, onOrder = { go(Page.Checkout) })
-                Page.Reader -> ReaderScreen(book = selectedBook, mode = readerMode, onMode = { readerMode = it }, onBack = ::back, onListen = ::openPremiumFeature, onPremium = { premiumPrompt = true })
+                Page.Reader -> ReaderScreen(book = selectedBook, mode = readerMode, page = currentPage, bookmarked = bookmarked, onBookmark = { bookmarked = !bookmarked }, onPage = { currentPage = it }, onMode = { readerMode = it }, onBack = ::back, onListen = ::openPremiumFeature, onPremium = { premiumPrompt = true })
                 Page.Listen -> ListenScreen(book = selectedBook, autoplay = autoplay, onAutoplay = { autoplay = it }, onBack = ::back)
                 Page.Community -> CommunityScreen(onGroup = { go(Page.Group) }, onCreate = { go(Page.CreatePost) })
                 Page.Group -> GroupScreen(onBack = ::back, onCreatePost = { go(Page.CreatePost) })
@@ -112,15 +115,18 @@ fun LittlePagesApp() {
                 Page.Offline -> OfflineScreen(onBack = ::back, onBook = { selectedBook = it; go(Page.Reader) })
                 Page.Parent -> ParentScreen(language = selectedLanguage, onLanguage = { selectedLanguage = it }, onProfiles = { go(Page.Profiles) }, onSubscription = { go(Page.Subscription) }, onOrders = { go(Page.Orders) }, onSupport = { go(Page.Support) }, onOffline = { go(Page.Offline) })
                 Page.Profiles -> ProfilesScreen(onBack = ::back)
-                Page.Subscription -> SubscriptionScreen(premium = premium, onBack = ::back, onSubscribe = { premium = true; back() })
-                Page.Checkout -> CheckoutScreen(book = selectedBook, onBack = ::back, onComplete = { go(Page.Orders) })
+                Page.Subscription -> SubscriptionScreen(premium = premium, onBack = ::back, onSubscribe = { unavailableNotice = "Subscription checkout is not connected yet. Premium access will only activate after a verified payment." })
+                Page.Checkout -> CheckoutScreen(book = selectedBook, onBack = ::back, onComplete = { unavailableNotice = "Checkout is not connected yet. No payment or order has been placed." })
                 Page.Orders -> OrdersScreen(onBack = ::back)
                 Page.Support -> SupportScreen(onBack = ::back)
             }
         }
 
         if (premiumPrompt) {
-            PremiumDialog(onDismiss = { premiumPrompt = false }, onSubscribe = { premium = true; premiumPrompt = false; go(Page.Listen) })
+            PremiumDialog(onDismiss = { premiumPrompt = false }, onSubscribe = { premiumPrompt = false; go(Page.Subscription) })
+        }
+        unavailableNotice?.let { message ->
+            AlertDialog(onDismissRequest = { unavailableNotice = null }, title = { Text("Not available yet") }, text = { Text(message) }, confirmButton = { TextButton(onClick = { unavailableNotice = null }) { Text("OK") } })
         }
     }
 }
@@ -286,12 +292,12 @@ private fun BookDetailsScreen(book: Book, onBack: () -> Unit, onRead: () -> Unit
 }
 
 @Composable
-private fun ReaderScreen(book: Book, mode: String, onMode: (String) -> Unit, onBack: () -> Unit, onListen: () -> Unit, onPremium: () -> Unit) {
+private fun ReaderScreen(book: Book, mode: String, page: Int, bookmarked: Boolean, onBookmark: () -> Unit, onPage: (Int) -> Unit, onMode: (String) -> Unit, onBack: () -> Unit, onListen: () -> Unit, onPremium: () -> Unit) {
     Column(Modifier.fillMaxSize().background(Color(0xFFF1EBDD))) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Filled.Close, "Close reader") }
             Text(book.title, Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            IconButton(onClick = {}) { Icon(Icons.Filled.BookmarkBorder, "Bookmark") }
+            IconButton(onClick = onBookmark) { Icon(if (bookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder, if (bookmarked) "Remove bookmark" else "Add bookmark", tint = PagesColors.Forest) }
             IconButton(onClick = onPremium) { Icon(Icons.Filled.Headphones, "Listen with Premium", tint = PagesColors.Forest) }
         }
         Box(Modifier.weight(1f).fillMaxWidth().padding(14.dp).clip(RoundedCornerShape(22.dp)).background(Brush.verticalGradient(listOf(Color(0xFFDDEBF1), Color(0xFFF5E9D5)))), contentAlignment = Alignment.Center) {
@@ -302,11 +308,11 @@ private fun ReaderScreen(book: Book, mode: String, onMode: (String) -> Unit, onB
             }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            IconButton(onClick = {}) { Icon(Icons.Filled.ChevronLeft, "Previous page", tint = PagesColors.Forest) }
-            Text("8 / 24", fontWeight = FontWeight.SemiBold)
+            IconButton(onClick = { onPage((page - 1).coerceAtLeast(1)) }, enabled = page > 1) { Icon(Icons.Filled.ChevronLeft, "Previous page", tint = PagesColors.Forest) }
+            Text("$page / 24", fontWeight = FontWeight.SemiBold)
             TextButton(onClick = { onMode(if (mode == "Page turn") "Scroll" else "Page turn") }) { Text(mode, color = PagesColors.Forest) }
             Surface(shape = RoundedCornerShape(24.dp), color = PagesColors.Forest, modifier = Modifier.clickable(onClick = onListen)) { Row(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) { Icon(Icons.AutoMirrored.Filled.VolumeUp, null, tint = Color.White, modifier = Modifier.size(18.dp)); Text(" Listen", color = Color.White, fontWeight = FontWeight.SemiBold) } }
-            IconButton(onClick = {}) { Icon(Icons.Filled.ChevronRight, "Next page", tint = PagesColors.Forest) }
+            IconButton(onClick = { onPage((page + 1).coerceAtMost(24)) }, enabled = page < 24) { Icon(Icons.Filled.ChevronRight, "Next page", tint = PagesColors.Forest) }
         }
         Spacer(Modifier.height(10.dp))
     }
@@ -314,7 +320,11 @@ private fun ReaderScreen(book: Book, mode: String, onMode: (String) -> Unit, onB
 
 @Composable
 private fun ListenScreen(book: Book, autoplay: Boolean, onAutoplay: (Boolean) -> Unit, onBack: () -> Unit) {
-    PageScaffold(onBack, "Read along", action = { IconButton(onClick = {}) { Icon(Icons.Filled.Settings, "Narration settings") } }) {
+    var playing by remember { mutableStateOf(true) }
+    var position by remember { mutableFloatStateOf(.42f) }
+    var speed by remember { mutableStateOf("1×") }
+    var showSettings by remember { mutableStateOf(false) }
+    PageScaffold(onBack, "Read along", action = { IconButton(onClick = { showSettings = true }) { Icon(Icons.Filled.Settings, "Narration settings") } }) {
         Box(Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(24.dp)).background(Brush.verticalGradient(listOf(PagesColors.Sky, PagesColors.Sage))), contentAlignment = Alignment.Center) { Text("🦊   🐦", fontSize = 70.sp) }
         Spacer(Modifier.height(16.dp))
         CardSurface(Modifier.fillMaxWidth()) {
@@ -323,19 +333,20 @@ private fun ListenScreen(book: Book, autoplay: Boolean, onAutoplay: (Boolean) ->
         }
         Spacer(Modifier.height(14.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = {}) { Icon(Icons.Filled.Replay10, "Back 10 seconds", tint = PagesColors.Forest) }
-            FilledIconButton(onClick = {}, modifier = Modifier.size(68.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = PagesColors.Forest)) { Icon(Icons.Filled.Pause, "Pause narration", modifier = Modifier.size(34.dp)) }
-            IconButton(onClick = {}) { Icon(Icons.Filled.Forward10, "Forward 10 seconds", tint = PagesColors.Forest) }
+            IconButton(onClick = { position = (position - .22f).coerceAtLeast(0f) }) { Icon(Icons.Filled.Replay10, "Back 10 seconds", tint = PagesColors.Forest) }
+            FilledIconButton(onClick = { playing = !playing }, modifier = Modifier.size(68.dp), colors = IconButtonDefaults.filledIconButtonColors(containerColor = PagesColors.Forest)) { Icon(if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow, if (playing) "Pause narration" else "Play narration", modifier = Modifier.size(34.dp)) }
+            IconButton(onClick = { position = (position + .22f).coerceAtMost(1f) }) { Icon(Icons.Filled.Forward10, "Forward 10 seconds", tint = PagesColors.Forest) }
         }
-        Slider(value = .42f, onValueChange = {}, colors = SliderDefaults.colors(thumbColor = PagesColors.Forest, activeTrackColor = PagesColors.Forest))
+        Slider(value = position, onValueChange = { position = it }, colors = SliderDefaults.colors(thumbColor = PagesColors.Forest, activeTrackColor = PagesColors.Forest))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("0:18", color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall); Text("0:46", color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall) }
         Spacer(Modifier.height(8.dp))
         CardSurface(Modifier.fillMaxWidth()) {
             Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.AutoStories, null, tint = PagesColors.Forest); Column(Modifier.weight(1f).padding(horizontal = 12.dp)) { Text("Autoplay pages", fontWeight = FontWeight.SemiBold); Text("Continue to the next page automatically", style = MaterialTheme.typography.bodySmall, color = PagesColors.Muted) }; Switch(autoplay, onAutoplay, colors = SwitchDefaults.colors(checkedTrackColor = PagesColors.Forest)) }
         }
-        Spacer(Modifier.height(10.dp)); ChipRow(listOf("Voice: Warm storyteller", "Speed: 1×"))
+        Spacer(Modifier.height(10.dp)); ChipRow(listOf("Voice: Warm storyteller", "Speed: $speed"))
         Text(book.title, color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp))
     }
+    if (showSettings) AlertDialog(onDismissRequest = { showSettings = false }, title = { Text("Narration settings") }, text = { Column { Text("Voice"); Text("Warm storyteller · English", color = PagesColors.Muted); Spacer(Modifier.height(14.dp)); Text("Reading speed"); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("0.8×", "1×", "1.2×", "1.5×").forEach { choice -> FilterChip(selected = speed == choice, onClick = { speed = choice }, label = { Text(choice) }) } } } }, confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Done") } })
 }
 
 @Composable
@@ -353,13 +364,16 @@ private fun CommunityScreen(onGroup: () -> Unit, onCreate: () -> Unit) {
 
 @Composable
 private fun GroupScreen(onBack: () -> Unit, onCreatePost: () -> Unit) {
+    var reply by remember { mutableStateOf("") }
+    val replies = remember { mutableStateListOf<String>() }
     PageScaffold(onBack, "Raising Kind Kids", action = { IconButton(onClick = onCreatePost) { Icon(Icons.Filled.MoreVert, "Group options") } }) {
         CardSurface(Modifier.fillMaxWidth(), color = PagesColors.Sage) { Column { Text("🌱  Raising Kind Kids", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); Text("312 parents · Stories and ideas for caring families", color = PagesColors.Muted, modifier = Modifier.padding(top = 4.dp)); Text("Joined", color = PagesColors.Forest, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.End).padding(top = 8.dp)) } }
         ChipRow(listOf("Discussion", "Resources", "Members")); SectionTitle("Latest discussion")
         CommunityPost("Priya Sharma", "3 days ago", "How do you talk to your kids about kindness when it’s hard? We read books that show different perspectives and then chat at bedtime.", "", {})
         CommunityPost("James Carter", "2 days ago", "We use the ‘kind choices’ language after reading together. It gives our son a simple way to reflect.", "", {})
+        replies.forEach { message -> CommunityPost("You", "Just now", message, "", {}) }
         OutlineButton("Start a discussion", Icons.Filled.Edit, onCreatePost)
-        OutlinedTextField(value = "", onValueChange = {}, placeholder = { Text("Write a reply…") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), trailingIcon = { IconButton(onClick = {}) { Icon(Icons.AutoMirrored.Filled.Send, "Send reply", tint = PagesColors.Forest) } })
+        OutlinedTextField(value = reply, onValueChange = { reply = it }, placeholder = { Text("Write a reply…") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), trailingIcon = { IconButton(onClick = { if (reply.isNotBlank()) { replies.add(reply.trim()); reply = "" } }, enabled = reply.isNotBlank()) { Icon(Icons.AutoMirrored.Filled.Send, "Send reply", tint = PagesColors.Forest) } })
     }
 }
 
