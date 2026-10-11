@@ -108,26 +108,25 @@ private val banglaCopy = mapOf(
     ,"If this continues, contact support from Parent Profile." to "সমস্যাটি চলতে থাকলে অভিভাবক প্রোফাইল থেকে সহায়তায় যোগাযোগ করুন।"
     ,"🎧✨" to "🎧✨", "🎧" to "🎧"
     ,"Try a title, author, category, or another search." to "শিরোনাম, লেখক বা বিষয় দিয়ে আবার খুঁজুন।", "Kindness" to "দয়া"
+    ,"Back" to "পেছনে", "Post options" to "পোস্টের বিকল্প", "Unlike post" to "পোস্টে লাইক সরান", "Like post" to "পোস্টে লাইক দিন"
+    ,"Photo shared by a parent" to "একজন অভিভাবকের শেয়ার করা ছবি", "Hide password" to "পাসওয়ার্ড লুকান", "Show password" to "পাসওয়ার্ড দেখান"
+    ,"Clear search" to "অনুসন্ধান মুছুন", "Remove saved book" to "সংরক্ষিত বই সরান", "Save book" to "বই সংরক্ষণ করুন"
+    ,"Back 10 seconds" to "১০ সেকেন্ড পেছনে", "Forward 10 seconds" to "১০ সেকেন্ড সামনে", "Pause narration" to "পড়া থামান", "Play narration" to "পড়া চালান"
+    ,"Report post" to "পোস্ট রিপোর্ট করুন", "Block this parent" to "এই অভিভাবককে ব্লক করুন", "8 comments" to "৮টি মন্তব্য"
+    ,"Reports are saved only in this local preview. No moderation team receives them yet." to "রিপোর্ট শুধু এই স্থানীয় নমুনায় থাকে। এখনো কোনো মডারেশন দল পায় না।"
+    ,"This hides this post in the current preview screen. The block is not synced to an account." to "এতে এই নমুনা পর্দায় পোস্টটি লুকানো হবে। ব্লকটি অ্যাকাউন্টে সিঙ্ক হবে না।"
+    ,"Loading photo…" to "ছবি লোড হচ্ছে…", "System default" to "সিস্টেমের ডিফল্ট কণ্ঠ"
+    ,"Listen with Premium" to "প্রিমিয়ামে শুনুন", "Community guidelines" to "কমিউনিটির নির্দেশিকা", "Create post" to "পোস্ট তৈরি করুন"
+    ,"Create discussion" to "আলোচনা শুরু করুন", "Send reply" to "উত্তর পাঠান"
 )
 
 private fun banglaDigits(value: String): String = value.map { character -> if (character in '0'..'9') '০' + (character - '0') else character }.joinToString("")
 
 @Composable
-internal fun AppText(
-    text: String,
-    modifier: Modifier = Modifier,
-    color: Color = Color.Unspecified,
-    fontSize: TextUnit = TextUnit.Unspecified,
-    fontWeight: FontWeight? = null,
-    textAlign: TextAlign? = null,
-    lineHeight: TextUnit = TextUnit.Unspecified,
-    maxLines: Int = Int.MAX_VALUE,
-    minLines: Int = 1,
-    overflow: TextOverflow = TextOverflow.Clip,
-    style: TextStyle = LocalTextStyle.current
-) {
+internal fun localizedAppCopy(text: String): String {
     val isBangla = LocalConfiguration.current.locales[0].language == "bn"
-    val renderedText = if (!isBangla) text else when {
+    if (!isBangla) return text
+    return when {
         text.startsWith("by ") -> "লেখক: ${text.removePrefix("by ")}"
         text.startsWith("Search results (") && text.endsWith(")") -> "অনুসন্ধানের ফলাফল (${banglaDigits(text.substringAfter('(').dropLast(1))})"
         text.startsWith("Ages ") && text.contains("   ·   ") -> {
@@ -159,8 +158,30 @@ internal fun AppText(
         text.startsWith("The Brave Little Fox · ") && text.contains(" of 24 pages") -> "সাহসী ছোট্ট শিয়াল · ২৪টির মধ্যে ${banglaDigits(text.substringAfter("· ").substringBefore(" of"))} পৃষ্ঠা"
         text.endsWith("% complete") -> "${banglaDigits(text.substringBefore('%'))}% সম্পন্ন"
         text.startsWith("Page ") -> "পৃষ্ঠা ${banglaDigits(text.substringAfter("Page "))}"
+        text.startsWith("Cover for ") -> "${text.removePrefix("Cover for ")} বইয়ের প্রচ্ছদ"
+        text.startsWith("Sample PDF page ") -> "নমুনা PDF-এর পৃষ্ঠা ${banglaDigits(text.removePrefix("Sample PDF page "))}"
+        text.startsWith("Rate ") && text.endsWith(" out of 5 stars") -> "৫টির মধ্যে ${banglaDigits(text.removePrefix("Rate ").substringBefore(' '))} তারকা রেটিং"
+        text.startsWith("Remove ") && text.endsWith(" from preview list") -> "${text.removePrefix("Remove ").removeSuffix(" from preview list")} নমুনা তালিকা থেকে সরান"
+        text.startsWith("Edit ") && text.endsWith(" profile") -> "${text.removePrefix("Edit ").removeSuffix(" profile")} প্রোফাইল সম্পাদনা করুন"
         else -> banglaCopy[text] ?: text
     }
+}
+
+@Composable
+internal fun AppText(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    fontSize: TextUnit = TextUnit.Unspecified,
+    fontWeight: FontWeight? = null,
+    textAlign: TextAlign? = null,
+    lineHeight: TextUnit = TextUnit.Unspecified,
+    maxLines: Int = Int.MAX_VALUE,
+    minLines: Int = 1,
+    overflow: TextOverflow = TextOverflow.Clip,
+    style: TextStyle = LocalTextStyle.current
+) {
+    val renderedText = localizedAppCopy(text)
     MaterialText(
         text = renderedText,
         modifier = modifier,

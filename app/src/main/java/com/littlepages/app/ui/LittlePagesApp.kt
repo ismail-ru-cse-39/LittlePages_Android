@@ -190,7 +190,7 @@ fun LittlePagesApp() {
                         NavigationBarItem(
                             selected = page == destination,
                             onClick = { if (page != destination) { stack.clear(); stack.add(destination) } },
-                            icon = { Icon(icon, contentDescription = label) },
+                            icon = { Icon(icon, contentDescription = localizedAppCopy(label)) },
                             label = { AppText(label, fontSize = 11.sp) },
                             colors = NavigationBarItemDefaults.colors(selectedIconColor = PagesColors.Forest, indicatorColor = PagesColors.Sage)
                         )
@@ -210,7 +210,7 @@ fun LittlePagesApp() {
                 Triple(Page.Community, stringResource(R.string.nav_community), Icons.Filled.Groups),
                 Triple(Page.Parent, stringResource(R.string.nav_profile), Icons.Filled.AccountCircle)
               ).forEach { (destination, label, icon) ->
-                NavigationRailItem(selected = page == destination, onClick = { if (page != destination) { stack.clear(); stack.add(destination) } }, icon = { Icon(icon, contentDescription = label) }, label = { AppText(label, fontSize = 11.sp) }, alwaysShowLabel = false, colors = NavigationRailItemDefaults.colors(selectedIconColor = PagesColors.Forest, indicatorColor = PagesColors.Sage))
+                NavigationRailItem(selected = page == destination, onClick = { if (page != destination) { stack.clear(); stack.add(destination) } }, icon = { Icon(icon, contentDescription = localizedAppCopy(label)) }, label = { AppText(label, fontSize = 11.sp) }, alwaysShowLabel = false, colors = NavigationRailItemDefaults.colors(selectedIconColor = PagesColors.Forest, indicatorColor = PagesColors.Sage))
               }
             }
           }
@@ -323,7 +323,7 @@ private fun EmailAuthScreen(onBack: () -> Unit, onContinue: (creatingAccount: Bo
     FormPage(title = if (creatingAccount) "Create parent account" else "Welcome back", subtitle = "Use a parent email to manage your family’s reading.", onBack = onBack) {
         OutlinedTextField(value = email, onValueChange = { email = it }, label = { AppText("Email address") }, leadingIcon = { Icon(Icons.Filled.Email, null) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && !validEmail, supportingText = { if (submitted && !validEmail) AppText("Enter a valid email address.") })
         Spacer(Modifier.height(PagesSpacing.Compact))
-        OutlinedTextField(value = password, onValueChange = { password = it }, label = { AppText("Password") }, leadingIcon = { Icon(Icons.Filled.Lock, null) }, visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(), trailingIcon = { IconButton(onClick = { passwordVisible = !passwordVisible }) { Icon(if (passwordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, if (passwordVisible) "Hide password" else "Show password") } }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && !validPassword, supportingText = { if (submitted && !validPassword) AppText("Use at least 8 characters.") })
+        OutlinedTextField(value = password, onValueChange = { password = it }, label = { AppText("Password") }, leadingIcon = { Icon(Icons.Filled.Lock, null) }, visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(), trailingIcon = { IconButton(onClick = { passwordVisible = !passwordVisible }) { Icon(if (passwordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, localizedAppCopy(if (passwordVisible) "Hide password" else "Show password")) } }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && !validPassword, supportingText = { if (submitted && !validPassword) AppText("Use at least 8 characters.") })
         if (creatingAccount) {
             Spacer(Modifier.height(PagesSpacing.Compact))
             OutlinedTextField(value = confirmPassword, onValueChange = { confirmPassword = it }, label = { AppText("Confirm password") }, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && !passwordsMatch, supportingText = { if (submitted && !passwordsMatch) AppText("Passwords do not match.") })
@@ -482,7 +482,7 @@ private fun SearchScreen(query: String, categories: List<ManagedCategory>, onQue
         query.isBlank() || book.title.contains(query, true) || book.author.contains(query, true) || labels.any { it.contains(query, true) } || (query.contains("বাংলা", true) && book.hasBangla)
     }
     PageScaffold(onBack, "Search books") {
-        OutlinedTextField(query, onQuery, modifier = Modifier.fillMaxWidth(), placeholder = { AppText("Title, character, or topic") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { onQuery("") }) { Icon(Icons.Filled.Clear, contentDescription = "Clear search") } }, shape = RoundedCornerShape(PagesShapes.Tag), singleLine = true)
+        OutlinedTextField(query, onQuery, modifier = Modifier.fillMaxWidth(), placeholder = { AppText("Title, character, or topic") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { onQuery("") }) { Icon(Icons.Filled.Clear, contentDescription = localizedAppCopy("Clear search")) } }, shape = RoundedCornerShape(PagesShapes.Tag), singleLine = true)
         Spacer(Modifier.height(PagesSpacing.Medium)); SectionTitle(if (query.isBlank()) "Suggested for you" else "Search results (${results.size})")
         if (results.isEmpty()) EmptyState(Icons.Filled.SearchOff, "No books found", "Try a title, author, category, or another search.")
         results.forEach { BookListRow(it) { onBook(it) } }
@@ -494,7 +494,7 @@ private fun SearchScreen(query: String, categories: List<ManagedCategory>, onQue
 @Composable
 private fun BookDetailsScreen(book: Book, categories: List<ManagedCategory>, saved: Boolean, premiumUnlocked: Boolean, onPremiumRequired: () -> Unit, onSave: () -> Unit, onBack: () -> Unit, onRead: () -> Unit, onListen: () -> Unit, onReviews: () -> Unit, onOrder: () -> Unit, onRecovery: () -> Unit) {
     val language = LocalConfiguration.current.locales[0].language
-    PageScaffold(onBack, "Book details", action = { IconButton(onClick = onSave) { Icon(if (saved) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, if (saved) "Remove saved book" else "Save book", tint = PagesColors.Forest) } }) {
+    PageScaffold(onBack, "Book details", action = { IconButton(onClick = onSave) { Icon(if (saved) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, localizedAppCopy(if (saved) "Remove saved book" else "Save book"), tint = PagesColors.Forest) } }) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             BookCover(book, Modifier.size(width = PagesSizes.BookDetailCoverWidth, height = PagesSizes.BookDetailCoverHeight))
             Column(Modifier.weight(1f).padding(start = PagesSpacing.Medium)) {
@@ -573,10 +573,10 @@ private fun ReaderScreen(book: Book, mode: String, page: Int, bookmarked: Boolea
     }
     Column(Modifier.fillMaxSize().background(Color(0xFFF1EBDD))) {
         Row(Modifier.fillMaxWidth().padding(horizontal = PagesSpacing.Compact, vertical = if (compactHeight) PagesSpacing.Micro else PagesSpacing.Small), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.Filled.Close, "Close reader") }
+            IconButton(onClick = onBack) { Icon(Icons.Filled.Close, localizedAppCopy("Close reader")) }
             AppText(book.title, Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             IconButton(onClick = onBookmark) { Icon(if (bookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder, if (bookmarked) "Remove bookmark" else "Add bookmark", tint = PagesColors.Forest) }
-            IconButton(onClick = onPremium) { Icon(Icons.Filled.Headphones, "Listen with Premium", tint = PagesColors.Forest) }
+            IconButton(onClick = onPremium) { Icon(Icons.Filled.Headphones, localizedAppCopy("Listen with Premium"), tint = PagesColors.Forest) }
         }
         if (mode == "Page turn") {
             Box(Modifier.weight(1f).fillMaxWidth().padding(if (compactHeight) PagesSpacing.Small else PagesSpacing.CardContent).clip(RoundedCornerShape(PagesShapes.ReaderPage)).background(Brush.verticalGradient(listOf(Color(0xFFDDEBF1), Color(0xFFF5E9D5)))), contentAlignment = Alignment.Center) {
@@ -598,15 +598,15 @@ private fun ReaderScreen(book: Book, mode: String, page: Int, bookmarked: Boolea
             }
         } else {
             Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = PagesSpacing.CardContent), contentAlignment = Alignment.Center) {
-                if (pdfBitmap != null) Image(bitmap = pdfBitmap!!.asImageBitmap(), contentDescription = "Sample PDF page $page", modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(PagesShapes.ReaderPage)))
+                if (pdfBitmap != null) Image(bitmap = pdfBitmap!!.asImageBitmap(), contentDescription = localizedAppCopy("Sample PDF page $page"), modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(PagesShapes.ReaderPage)))
                 else AppText(if (pdfFailed) "The sample PDF could not be opened. Switch modes and try again." else "Preparing the sample PDF…", color = PagesColors.Muted, textAlign = TextAlign.Center)
             }
         }
         if (compactWidth) {
             Row(Modifier.fillMaxWidth().padding(horizontal = PagesSpacing.Medium), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { onPage((page - 1).coerceAtLeast(1)) }, enabled = page > 1) { Icon(Icons.Filled.ChevronLeft, "Previous page", tint = PagesColors.Forest) }
+                IconButton(onClick = { onPage((page - 1).coerceAtLeast(1)) }, enabled = page > 1) { Icon(Icons.Filled.ChevronLeft, localizedAppCopy("Previous page"), tint = PagesColors.Forest) }
                 Spacer(Modifier.weight(1f)); AppText("$page / 24", fontWeight = FontWeight.SemiBold); Spacer(Modifier.weight(1f))
-                IconButton(onClick = { onPage((page + 1).coerceAtMost(24)) }, enabled = page < 24) { Icon(Icons.Filled.ChevronRight, "Next page", tint = PagesColors.Forest) }
+                IconButton(onClick = { onPage((page + 1).coerceAtMost(24)) }, enabled = page < 24) { Icon(Icons.Filled.ChevronRight, localizedAppCopy("Next page"), tint = PagesColors.Forest) }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = PagesSpacing.Medium), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 TextButton(onClick = { onMode(when (mode) { "Page turn" -> "Scroll"; "Scroll" -> "PDF"; else -> "Page turn" }) }) { AppText("Mode: $mode", color = PagesColors.Forest) }
@@ -614,11 +614,11 @@ private fun ReaderScreen(book: Book, mode: String, page: Int, bookmarked: Boolea
             }
         } else {
             Row(Modifier.fillMaxWidth().padding(horizontal = PagesSpacing.Medium), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                IconButton(onClick = { onPage((page - 1).coerceAtLeast(1)) }, enabled = page > 1) { Icon(Icons.Filled.ChevronLeft, "Previous page", tint = PagesColors.Forest) }
+                IconButton(onClick = { onPage((page - 1).coerceAtLeast(1)) }, enabled = page > 1) { Icon(Icons.Filled.ChevronLeft, localizedAppCopy("Previous page"), tint = PagesColors.Forest) }
                 AppText("$page / 24", fontWeight = FontWeight.SemiBold)
                 TextButton(onClick = { onMode(when (mode) { "Page turn" -> "Scroll"; "Scroll" -> "PDF"; else -> "Page turn" }) }) { AppText(mode, color = PagesColors.Forest) }
                 Button(onClick = onListen, modifier = Modifier.heightIn(min = PagesSizes.MinimumTouchTarget), shape = RoundedCornerShape(PagesShapes.LargeCard), colors = ButtonDefaults.buttonColors(containerColor = PagesColors.Forest), contentPadding = PaddingValues(horizontal = PagesSpacing.Compact, vertical = PagesSpacing.Small)) { Icon(Icons.AutoMirrored.Filled.VolumeUp, null, tint = Color.White, modifier = Modifier.size(PagesSizes.IconSmall)); AppText(" Listen", color = Color.White, fontWeight = FontWeight.SemiBold) }
-                IconButton(onClick = { onPage((page + 1).coerceAtMost(24)) }, enabled = page < 24) { Icon(Icons.Filled.ChevronRight, "Next page", tint = PagesColors.Forest) }
+                IconButton(onClick = { onPage((page + 1).coerceAtMost(24)) }, enabled = page < 24) { Icon(Icons.Filled.ChevronRight, localizedAppCopy("Next page"), tint = PagesColors.Forest) }
             }
         }
         Spacer(Modifier.height(PagesSpacing.ControlGap))
@@ -719,7 +719,7 @@ private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (
     }
     fun durationLabel(seconds: Int): String = "%d:%02d".format(seconds / 60, seconds % 60)
 
-    PageScaffold(onBack, "Read along", action = { IconButton(onClick = { showSettings = true }) { Icon(Icons.Filled.Settings, "Narration settings") } }) {
+    PageScaffold(onBack, "Read along", action = { IconButton(onClick = { showSettings = true }) { Icon(Icons.Filled.Settings, localizedAppCopy("Narration settings")) } }) {
         Box(Modifier.fillMaxWidth().height(PagesSizes.ReadAlongIllustrationHeight).clip(RoundedCornerShape(PagesShapes.LargeCard)).background(Brush.verticalGradient(listOf(PagesColors.Sky, PagesColors.Sage))), contentAlignment = Alignment.Center) { AppText("🦊   🐦", fontSize = 70.sp) }
         Spacer(Modifier.height(PagesSpacing.Medium))
         CardSurface(Modifier.fillMaxWidth()) { MaterialText(text = highlightedText, style = MaterialTheme.typography.headlineSmall, lineHeight = 36.sp) }
@@ -727,7 +727,7 @@ private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (
         else if (!narrationState.ready) AppText("Preparing your device’s voice…", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = PagesSpacing.Small))
         Spacer(Modifier.height(PagesSpacing.CardContent))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(enabled = narrationState.ready, onClick = { seekTo((position - 10f / estimatedSeconds).coerceAtLeast(0f)) }) { Icon(Icons.Filled.Replay10, "Back 10 seconds", tint = PagesColors.Forest) }
+            IconButton(enabled = narrationState.ready, onClick = { seekTo((position - 10f / estimatedSeconds).coerceAtLeast(0f)) }) { Icon(Icons.Filled.Replay10, localizedAppCopy("Back 10 seconds"), tint = PagesColors.Forest) }
             FilledIconButton(enabled = narrationState.ready, onClick = {
                 if (isPlaying) {
                     resumeOffset = narrationState.activeRange?.first ?: resumeOffset
@@ -735,15 +735,16 @@ private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (
                     isPlaying = false
                     audioFocus.abandon()
                 } else isPlaying = speakFrom(resumeOffset)
-            }, modifier = Modifier.size(PagesSizes.NarrationButton), colors = IconButtonDefaults.filledIconButtonColors(containerColor = PagesColors.Forest)) { Icon(if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, if (isPlaying) "Pause narration" else "Play narration", modifier = Modifier.size(PagesSizes.NarrationPlayIcon)) }
-            IconButton(enabled = narrationState.ready, onClick = { seekTo((position + 10f / estimatedSeconds).coerceAtMost(1f)) }) { Icon(Icons.Filled.Forward10, "Forward 10 seconds", tint = PagesColors.Forest) }
+            }, modifier = Modifier.size(PagesSizes.NarrationButton), colors = IconButtonDefaults.filledIconButtonColors(containerColor = PagesColors.Forest)) { Icon(if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, localizedAppCopy(if (isPlaying) "Pause narration" else "Play narration"), modifier = Modifier.size(PagesSizes.NarrationPlayIcon)) }
+            IconButton(enabled = narrationState.ready, onClick = { seekTo((position + 10f / estimatedSeconds).coerceAtMost(1f)) }) { Icon(Icons.Filled.Forward10, localizedAppCopy("Forward 10 seconds"), tint = PagesColors.Forest) }
         }
         Slider(value = position, onValueChange = { position = it }, onValueChangeFinished = { seekTo(position) }, enabled = narrationState.ready, colors = SliderDefaults.colors(thumbColor = PagesColors.Forest, activeTrackColor = PagesColors.Forest))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { AppText(durationLabel((position * estimatedSeconds).toInt()), color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall); AppText(durationLabel(estimatedSeconds), color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall) }
         Spacer(Modifier.height(PagesSpacing.Small))
         if (previewOnly) AppText("One-page read-along preview", color = PagesColors.Forest, style = MaterialTheme.typography.labelMedium)
         CardSurface(Modifier.fillMaxWidth()) {
-            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.AutoStories, null, tint = PagesColors.Forest); Column(Modifier.weight(1f).padding(horizontal = PagesSpacing.Compact)) { AppText("Autoplay pages", fontWeight = FontWeight.SemiBold); AppText("Continue to the next page automatically", style = MaterialTheme.typography.bodySmall, color = PagesColors.Muted) }; Switch(autoplay, onAutoplay, enabled = !previewOnly, modifier = Modifier.semantics { contentDescription = "Autoplay pages" }, colors = SwitchDefaults.colors(checkedTrackColor = PagesColors.Forest)) }
+            val autoplayLabel = localizedAppCopy("Autoplay pages")
+            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.AutoStories, null, tint = PagesColors.Forest); Column(Modifier.weight(1f).padding(horizontal = PagesSpacing.Compact)) { AppText("Autoplay pages", fontWeight = FontWeight.SemiBold); AppText("Continue to the next page automatically", style = MaterialTheme.typography.bodySmall, color = PagesColors.Muted) }; Switch(autoplay, onAutoplay, enabled = !previewOnly, modifier = Modifier.semantics { contentDescription = autoplayLabel }, colors = SwitchDefaults.colors(checkedTrackColor = PagesColors.Forest)) }
         }
         Spacer(Modifier.height(PagesSpacing.ControlGap))
         AppText("Voice: ${narrationState.voices.firstOrNull { it.id == selectedVoiceId }?.label ?: "System default"} · Speed: $speed", color = PagesColors.Forest, style = MaterialTheme.typography.labelMedium)
@@ -779,7 +780,7 @@ private fun CommunityScreen(posts: List<CommunityEntry>, categories: List<Manage
         CommunityEntry("Our library hosted a lovely family story hour this weekend.", category = "activities", author = "James Carter", time = "3 days ago")
     )
     val feedPosts = (posts + examplePosts).filter { it.author !in blockedAuthors && (effectiveFeed == "all" || it.category == effectiveFeed) }
-    MainPage(title = "Parent community", subtitle = "A kind space to share the reading journey.", action = { Row { IconButton(onClick = { showGuidelines = true }) { Icon(Icons.Filled.Info, "Community guidelines", tint = PagesColors.Forest) }; IconButton(onClick = onCreate) { Icon(Icons.Filled.Add, "Create post", tint = PagesColors.Forest) } } }) {
+    MainPage(title = "Parent community", subtitle = "A kind space to share the reading journey.", action = { Row { IconButton(onClick = { showGuidelines = true }) { Icon(Icons.Filled.Info, localizedAppCopy("Community guidelines"), tint = PagesColors.Forest) }; IconButton(onClick = onCreate) { Icon(Icons.Filled.Add, localizedAppCopy("Create post"), tint = PagesColors.Forest) } } }) {
         AppText("Community guidelines: protect children’s privacy, be kind, and share only images you have permission to post. Report content that feels unsafe. Moderation is not connected in this preview.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
         CardSurface(Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onCreate), color = PagesColors.Sage) { Row(verticalAlignment = Alignment.CenterVertically) { Avatar("E"); AppText(" Share a thought with parents…", color = PagesColors.Muted, modifier = Modifier.weight(1f).padding(horizontal = PagesSpacing.ControlGap)); Icon(Icons.Filled.AddPhotoAlternate, null, tint = PagesColors.Forest) } }
         Spacer(Modifier.height(PagesSpacing.Medium)); ChipRow(feedCategories.map { it.second }, selectedIndex = feedCategories.indexOfFirst { it.first == effectiveFeed }, onSelect = { selectedFeed = feedCategories[it].first })
@@ -797,7 +798,7 @@ private fun GroupScreen(posts: List<CommunityEntry>, blockedAuthors: List<String
     var reply by remember { mutableStateOf("") }
     var selectedTab by remember { mutableStateOf("Discussion") }
     val replies = remember { mutableStateListOf<String>() }
-    PageScaffold(onBack, "Raising Kind Kids", action = { IconButton(onClick = onCreatePost) { Icon(Icons.Filled.Add, "Create discussion") } }) {
+    PageScaffold(onBack, "Raising Kind Kids", action = { IconButton(onClick = onCreatePost) { Icon(Icons.Filled.Add, localizedAppCopy("Create discussion")) } }) {
         var joined by remember { mutableStateOf(false) }
         CardSurface(Modifier.fillMaxWidth(), color = PagesColors.Sage) { Column { AppText("🌱  Raising Kind Kids", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); AppText("312 parents · Stories and ideas for caring families", color = PagesColors.Muted, modifier = Modifier.padding(top = PagesSpacing.ExtraSmall)); TextButton(onClick = { if (canParticipate) joined = !joined }, modifier = Modifier.align(Alignment.End), enabled = canParticipate) { AppText(if (joined) "Joined · Leave group" else "Join group", color = PagesColors.Forest, fontWeight = FontWeight.SemiBold) } } }
         val tabs = listOf("Discussion", "Resources", "Members")
@@ -814,7 +815,7 @@ private fun GroupScreen(posts: List<CommunityEntry>, blockedAuthors: List<String
                     posts.filter { it.author !in blockedAuthors }.forEach { post -> CommunityPost(post.author, post.time + " · preview only", post.body, if (post.hasPhoto) "🖼️" else "", null, imageUri = post.imageUri, onBlock = { onBlockAuthor(post.author) }) }
                     replies.forEach { message -> CommunityPost("You", "Just now", message, "", null) }
                     OutlineButton("Start a discussion", Icons.Filled.Edit, onCreatePost)
-                    OutlinedTextField(value = reply, onValueChange = { reply = it }, placeholder = { AppText("Write a reply…") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Tag), trailingIcon = { IconButton(onClick = { if (reply.isNotBlank()) { replies.add(reply.trim()); reply = "" } }, enabled = reply.isNotBlank()) { Icon(Icons.AutoMirrored.Filled.Send, "Send reply", tint = PagesColors.Forest) } })
+                    OutlinedTextField(value = reply, onValueChange = { reply = it }, placeholder = { AppText("Write a reply…") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Tag), trailingIcon = { IconButton(onClick = { if (reply.isNotBlank()) { replies.add(reply.trim()); reply = "" } }, enabled = reply.isNotBlank()) { Icon(Icons.AutoMirrored.Filled.Send, localizedAppCopy("Send reply"), tint = PagesColors.Forest) } })
                 }
             }
             "Resources" -> {
@@ -901,7 +902,7 @@ private fun ReviewsScreen(book: Book, onBack: () -> Unit) {
             if (author !in blockedAuthors) CardSurface(Modifier.fillMaxWidth()) { Column { AppText(author, fontWeight = FontWeight.Bold); AppText("★★★★★", color = PagesColors.Gold); AppText(review, color = PagesColors.Muted); Row { TextButton(onClick = { showReportNotice = true }, contentPadding = PaddingValues(horizontal = PagesSpacing.Small)) { AppText("Report", color = PagesColors.Forest, style = MaterialTheme.typography.labelLarge) }; TextButton(onClick = { authorToBlock = author }, contentPadding = PaddingValues(horizontal = PagesSpacing.Small)) { AppText("Block", color = PagesColors.Forest, style = MaterialTheme.typography.labelLarge) } } } }
         }
     }
-    if (showWriteReview) AlertDialog(onDismissRequest = { showWriteReview = false }, title = { AppText("Write a review") }, text = { Column { AppText("Your rating"); Row { (1..5).forEach { value -> IconButton(onClick = { reviewRating = value }, modifier = Modifier.size(PagesSizes.MinimumTouchTarget)) { Icon(if (value <= reviewRating) Icons.Filled.Star else Icons.Filled.StarBorder, contentDescription = "Rate $value out of 5 stars", tint = PagesColors.Gold) } } }; OutlinedTextField(value = reviewText, onValueChange = { reviewText = it.take(800) }, label = { AppText("Share your thoughts") }, minLines = 3, isError = submitted && reviewText.isBlank()) } }, confirmButton = { TextButton(onClick = { submitted = true; if (reviewText.isNotBlank()) { localReviews.add(0, reviewRating to reviewText.trim()); reviewText = ""; submitted = false; showWriteReview = false } }) { AppText("Save preview") } }, dismissButton = { TextButton(onClick = { showWriteReview = false }) { AppText("Cancel") } })
+    if (showWriteReview) AlertDialog(onDismissRequest = { showWriteReview = false }, title = { AppText("Write a review") }, text = { Column { AppText("Your rating"); Row { (1..5).forEach { value -> IconButton(onClick = { reviewRating = value }, modifier = Modifier.size(PagesSizes.MinimumTouchTarget)) { Icon(if (value <= reviewRating) Icons.Filled.Star else Icons.Filled.StarBorder, contentDescription = localizedAppCopy("Rate $value out of 5 stars"), tint = PagesColors.Gold) } } }; OutlinedTextField(value = reviewText, onValueChange = { reviewText = it.take(800) }, label = { AppText("Share your thoughts") }, minLines = 3, isError = submitted && reviewText.isBlank()) } }, confirmButton = { TextButton(onClick = { submitted = true; if (reviewText.isNotBlank()) { localReviews.add(0, reviewRating to reviewText.trim()); reviewText = ""; submitted = false; showWriteReview = false } }) { AppText("Save preview") } }, dismissButton = { TextButton(onClick = { showWriteReview = false }) { AppText("Cancel") } })
     if (showReportNotice) AlertDialog(onDismissRequest = { showReportNotice = false }, title = { AppText("Report review") }, text = { AppText("Reports are not sent until the community moderation service is configured.") }, confirmButton = { TextButton(onClick = { showReportNotice = false }) { AppText("Got it") } })
     authorToBlock?.let { author -> AlertDialog(onDismissRequest = { authorToBlock = null }, title = { AppText("Block $author?") }, text = { AppText("This preview will hide this person’s reviews on this screen. Blocking is not saved or sent to a moderation service.") }, confirmButton = { TextButton(onClick = { blockedAuthors.add(author); authorToBlock = null }) { AppText("Block") } }, dismissButton = { TextButton(onClick = { authorToBlock = null }) { AppText("Cancel") } }) }
 }
@@ -923,7 +924,7 @@ private fun OfflineScreen(books: List<Book>, onBack: () -> Unit, onBrowse: () ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     BookCover(book, Modifier.size(PagesSizes.BookListCover))
                     Column(Modifier.weight(1f).padding(horizontal = PagesSpacing.Compact)) { AppText(book.title, fontWeight = FontWeight.Bold); AppText("Preview entry · file not stored", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }
-                    IconButton(onClick = { bookToRemove = book }) { Icon(Icons.Filled.DeleteOutline, "Remove ${book.title} from preview list", tint = PagesColors.Forest) }
+                    IconButton(onClick = { bookToRemove = book }) { Icon(Icons.Filled.DeleteOutline, localizedAppCopy("Remove ${book.title} from preview list"), tint = PagesColors.Forest) }
                 }
             }
         }
@@ -978,7 +979,7 @@ private fun ProfilesScreen(children: List<ChildProfile>, selectedChildId: String
                         AppText("${child.ageBand} · English and বাংলা", color = PagesColors.Muted)
                         AppText("$startedBooks stories started · Brave Little Fox page $lastReadPage of 24", color = PagesColors.Forest, style = MaterialTheme.typography.bodySmall)
                     }
-                    IconButton(onClick = { editing = child; nickname = child.nickname; ageBand = child.ageBand; submitted = false }) { Icon(Icons.Filled.Edit, "Edit ${child.nickname} profile", tint = PagesColors.Forest) }
+                    IconButton(onClick = { editing = child; nickname = child.nickname; ageBand = child.ageBand; submitted = false }) { Icon(Icons.Filled.Edit, localizedAppCopy("Edit ${child.nickname} profile"), tint = PagesColors.Forest) }
                 }
                 TextButton(onClick = { onSelectChild(child.id) }, modifier = Modifier.align(Alignment.End)) { AppText(if (selectedChildId == child.id) "Selected for reading" else "Use this profile", color = PagesColors.Forest) }
             }

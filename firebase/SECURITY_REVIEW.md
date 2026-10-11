@@ -14,6 +14,19 @@
 - Community writes require a parent identity and server-side content/size/rate checks. Moderated content is not visible until the server sets the approved state. Reports are private to the reporter and authorized moderators.
 - Firebase App Check, provider webhook signature checks, and idempotent processing are required in addition to Authentication.
 
+## Proposed staff capability matrix
+
+This is a design target for the trusted admin service, not an implemented grant list. Deny by default and check capabilities on the server for every request; hiding a control in the web page is not authorization.
+
+| Role | Edit drafts | Publish / rollback | Moderate community | Manage staff and policy |
+| --- | --- | --- | --- | --- |
+| Catalog editor | Yes | No | No | No |
+| Publisher | Yes | Yes | No | No |
+| Moderator | No | No | Yes | No |
+| Administrator | Yes | Yes | Yes | Yes |
+
+Prefer separate publisher and moderator assignments. Staff identity changes, role grants/revocations, publication, rollback, moderation decisions, and policy changes must create immutable audit events with actor UID, action, target, timestamp, request/correlation ID, and before/after revision references where applicable. High-impact operations should require reauthentication or an approval step selected by the security owner.
+
 ## Before rules can be authored and deployed
 
 Confirm the collection layout, staff identity source, role lifecycle, parent/child ownership model, moderation visibility states, App Check registrations, and Storage upload flow. Then implement least-privilege rules, add Firebase Emulator Suite rule tests, review the rules with the security owner, and deploy to development first. Keep the Phase 3 security task unchecked until those steps pass.

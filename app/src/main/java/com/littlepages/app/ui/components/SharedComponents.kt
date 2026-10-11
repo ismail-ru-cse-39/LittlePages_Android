@@ -32,6 +32,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.sp
 import com.littlepages.app.ui.AppText
+import com.littlepages.app.ui.localizedAppCopy
 import com.littlepages.app.ui.Book
 import com.littlepages.app.ui.theme.PagesColors
 import com.littlepages.app.ui.theme.PagesBreakpoints
@@ -65,7 +66,7 @@ internal fun PageScaffold(onBack: () -> Unit, title: String, action: (@Composabl
         val contentMaxWidth = if (maxWidth >= PagesBreakpoints.ExpandedWidth) PagesBreakpoints.ExpandedContentMaxWidth else PagesBreakpoints.CompactContentMaxWidth
         Column(Modifier.widthIn(max = contentMaxWidth).fillMaxWidth().align(Alignment.TopCenter).verticalScroll(rememberScrollState()).padding(horizontal = sidePadding)) {
             Row(Modifier.fillMaxWidth().padding(top = PagesSpacing.ExtraSmall, bottom = PagesSpacing.Compact), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack, modifier = Modifier.size(PagesSizes.MinimumTouchTarget)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = PagesColors.Ink) }
+                IconButton(onClick = onBack, modifier = Modifier.size(PagesSizes.MinimumTouchTarget)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, localizedAppCopy("Back"), tint = PagesColors.Ink) }
                 AppText(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 action?.invoke()
             }
@@ -139,7 +140,8 @@ internal fun ChipRow(labels: List<String>, selectedIndex: Int = 0, onSelect: ((I
 
 @Composable
 internal fun BookCover(book: Book, modifier: Modifier = Modifier) {
-    Box(modifier.clip(RoundedCornerShape(PagesShapes.Control)).background(Brush.verticalGradient(listOf(book.tint, PagesColors.Cream))).semantics { contentDescription = "Cover for ${book.title}" }, contentAlignment = Alignment.Center) {
+    val coverDescription = localizedAppCopy("Cover for ${book.title}")
+    Box(modifier.clip(RoundedCornerShape(PagesShapes.Control)).background(Brush.verticalGradient(listOf(book.tint, PagesColors.Cream))).semantics { contentDescription = coverDescription }, contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) { AppText(book.emoji, fontSize = 44.sp); AppText(book.title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, color = PagesColors.Ink, modifier = Modifier.padding(horizontal = PagesSpacing.Small, vertical = PagesSpacing.ExtraSmall)) }
     }
 }
@@ -182,13 +184,13 @@ internal fun CommunityPost(name: String, time: String, body: String, photo: Stri
     var hidden by remember(name, time, body) { mutableStateOf(false) }
     if (hidden) return
     CardSurface(Modifier.fillMaxWidth().padding(bottom = PagesSpacing.ControlGap)) {
-        Row(verticalAlignment = Alignment.CenterVertically) { Avatar(name.first().toString()); Column(Modifier.padding(start = PagesSpacing.ControlGap).weight(1f)) { AppText(name, fontWeight = FontWeight.Bold); AppText(time, color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall) }; Box { IconButton(onClick = { showOptions = true }) { Icon(Icons.Filled.MoreHoriz, "Post options", tint = PagesColors.Muted) }; DropdownMenu(expanded = showOptions, onDismissRequest = { showOptions = false }) { DropdownMenuItem(text = { AppText("Report post") }, onClick = { showOptions = false; if (onReport != null) onReport() else showReport = true }); DropdownMenuItem(text = { AppText("Block this parent") }, onClick = { showOptions = false; if (onBlock != null) onBlock() else showBlock = true }) } } }
+        Row(verticalAlignment = Alignment.CenterVertically) { Avatar(name.first().toString()); Column(Modifier.padding(start = PagesSpacing.ControlGap).weight(1f)) { AppText(name, fontWeight = FontWeight.Bold); AppText(time, color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall) }; Box { IconButton(onClick = { showOptions = true }) { Icon(Icons.Filled.MoreHoriz, localizedAppCopy("Post options"), tint = PagesColors.Muted) }; DropdownMenu(expanded = showOptions, onDismissRequest = { showOptions = false }) { DropdownMenuItem(text = { AppText("Report post") }, onClick = { showOptions = false; if (onReport != null) onReport() else showReport = true }); DropdownMenuItem(text = { AppText("Block this parent") }, onClick = { showOptions = false; if (onBlock != null) onBlock() else showBlock = true }) } } }
         AppText(body, modifier = Modifier.padding(top = PagesSpacing.Compact), style = MaterialTheme.typography.bodyMedium)
         if (imageUri != null) CommunityPostImage(imageUri)
         else if (photo.isNotBlank()) Box(Modifier.fillMaxWidth().padding(top = PagesSpacing.ControlGap).height(PagesSizes.CommunityImageHeight).clip(RoundedCornerShape(PagesShapes.Control)).background(PagesColors.Sage), contentAlignment = Alignment.Center) { AppText(photo, fontSize = 56.sp) }
         Row(Modifier.padding(top = PagesSpacing.ControlGap), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { liked = !liked; likeCount += if (liked) 1 else -1 }) {
-                Icon(if (liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = if (liked) "Unlike post" else "Like post", tint = if (liked) PagesColors.Forest else PagesColors.Muted)
+                Icon(if (liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = localizedAppCopy(if (liked) "Unlike post" else "Like post"), tint = if (liked) PagesColors.Forest else PagesColors.Muted)
             }
             AppText(likeCount.toString(), color = PagesColors.Muted)
             if (onClick != null) TextButton(onClick = onClick, modifier = Modifier.weight(1f)) { AppText("8 comments", color = PagesColors.Muted) }
@@ -217,7 +219,7 @@ private fun CommunityPostImage(uri: Uri) {
     if (imageBitmap == null) {
         Box(Modifier.fillMaxWidth().padding(top = PagesSpacing.ControlGap).height(PagesSizes.CommunityImageHeight).clip(RoundedCornerShape(PagesShapes.Control)).background(PagesColors.Sage), contentAlignment = Alignment.Center) { AppText("Loading photo…", color = PagesColors.Muted) }
     } else {
-        Image(imageBitmap!!, contentDescription = "Photo shared by a parent", modifier = Modifier.fillMaxWidth().padding(top = PagesSpacing.ControlGap).height(PagesSizes.CommunityImageHeight).clip(RoundedCornerShape(PagesShapes.Control)))
+        Image(imageBitmap!!, contentDescription = localizedAppCopy("Photo shared by a parent"), modifier = Modifier.fillMaxWidth().padding(top = PagesSpacing.ControlGap).height(PagesSizes.CommunityImageHeight).clip(RoundedCornerShape(PagesShapes.Control)))
     }
 }
 
