@@ -32,25 +32,31 @@ import com.littlepages.app.ui.theme.PagesSpacing
 // Shared layout and design-system components.
 @Composable
 internal fun MainPage(title: String, subtitle: String, action: (@Composable () -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = PagesSpacing.ScreenHorizontal)) {
-        Row(Modifier.fillMaxWidth().padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) { AppText(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = PagesColors.Ink); AppText(subtitle, color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp)) }
-            action?.invoke()
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val sidePadding = if (maxWidth < 360.dp) 14.dp else if (maxWidth >= 840.dp) 28.dp else PagesSpacing.ScreenHorizontal
+        Column(Modifier.widthIn(max = if (maxWidth >= 840.dp) 960.dp else 760.dp).fillMaxWidth().align(Alignment.TopCenter).verticalScroll(rememberScrollState()).padding(horizontal = sidePadding)) {
+            Row(Modifier.fillMaxWidth().padding(top = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) { AppText(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = PagesColors.Ink); AppText(subtitle, color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp)) }
+                action?.invoke()
+            }
+            Spacer(Modifier.height(18.dp)); content()
+            Spacer(Modifier.height(20.dp))
         }
-        Spacer(Modifier.height(18.dp)); content()
-        Spacer(Modifier.height(20.dp))
     }
 }
 
 @Composable
 internal fun PageScaffold(onBack: () -> Unit, title: String, action: (@Composable () -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = PagesSpacing.ScreenHorizontal)) {
-        Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack, modifier = Modifier.size(42.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = PagesColors.Ink) }
-            AppText(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            action?.invoke()
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val sidePadding = if (maxWidth < 360.dp) 14.dp else if (maxWidth >= 840.dp) 28.dp else PagesSpacing.ScreenHorizontal
+        Column(Modifier.widthIn(max = if (maxWidth >= 840.dp) 960.dp else 760.dp).fillMaxWidth().align(Alignment.TopCenter).verticalScroll(rememberScrollState()).padding(horizontal = sidePadding)) {
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack, modifier = Modifier.size(42.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = PagesColors.Ink) }
+                AppText(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                action?.invoke()
+            }
+            content(); Spacer(Modifier.height(24.dp))
         }
-        content(); Spacer(Modifier.height(24.dp))
     }
 }
 

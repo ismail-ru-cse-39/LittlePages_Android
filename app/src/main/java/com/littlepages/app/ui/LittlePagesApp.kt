@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.Text as MaterialText
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,13 +71,21 @@ private data class ChildProfile(val nickname: String, val ageBand: String)
 
 @Composable
 fun LittlePagesApp() {
-    val stack = remember { mutableStateListOf(Page.Welcome) }
+    val navigationStackSaver = remember {
+        listSaver<androidx.compose.runtime.snapshots.SnapshotStateList<Page>, String>(
+            save = { routeStack -> routeStack.map(Page::name) },
+            restore = { savedRoutes -> savedRoutes.map(Page::valueOf).toMutableStateList() }
+        )
+    }
+    val stack = rememberSaveable(saver = navigationStackSaver) { mutableStateListOf(Page.Welcome) }
     var premium by remember { mutableStateOf(false) }
     var premiumPrompt by remember { mutableStateOf(false) }
     var unavailableNotice by remember { mutableStateOf<String?>(null) }
     var selectedBook by remember { mutableStateOf(books.first()) }
     var query by remember { mutableStateOf("") }
     val appConfiguration = LocalConfiguration.current
+    val useNavigationRail = appConfiguration.screenWidthDp >= 600
+    val mainTabs = listOf(Page.Home, Page.Library, Page.Community, Page.Parent, Page.Offline)
     val appContext = LocalContext.current
     val activity = appContext as? Activity
     val systemAnimationsEnabled = ValueAnimator.areAnimatorsEnabled()
@@ -101,7 +111,7 @@ fun LittlePagesApp() {
     Scaffold(
         containerColor = PagesColors.Cream,
         bottomBar = {
-            if (page in listOf(Page.Home, Page.Library, Page.Community, Page.Parent, Page.Offline)) {
+            if (!useNavigationRail && page in mainTabs) {
                 NavigationBar(containerColor = PagesColors.Paper, tonalElevation = 0.dp) {
                     val items = listOf(
                         Triple(Page.Home, stringResource(R.string.nav_home), Icons.Filled.Home),
@@ -122,12 +132,25 @@ fun LittlePagesApp() {
             }
         }
     ) { insets ->
-        AnimatedContent(
+        Row(Modifier.fillMaxSize().padding(insets)) {
+          if (useNavigationRail && page in mainTabs) {
+            NavigationRail(containerColor = PagesColors.Paper) {
+              listOf(
+                Triple(Page.Home, stringResource(R.string.nav_home), Icons.Filled.Home),
+                Triple(Page.Library, stringResource(R.string.nav_library), Icons.Filled.AutoStories),
+                Triple(Page.Community, stringResource(R.string.nav_community), Icons.Filled.Groups),
+                Triple(Page.Parent, stringResource(R.string.nav_profile), Icons.Filled.AccountCircle)
+              ).forEach { (destination, label, icon) ->
+                NavigationRailItem(selected = page == destination, onClick = { if (page != destination) { stack.clear(); stack.add(destination) } }, icon = { Icon(icon, contentDescription = label) }, label = { AppText(label, fontSize = 11.sp) }, alwaysShowLabel = false, colors = NavigationRailItemDefaults.colors(selectedIconColor = PagesColors.Forest, indicatorColor = PagesColors.Sage))
+              }
+            }
+          }
+          AnimatedContent(
             targetState = page,
             transitionSpec = { if (systemAnimationsEnabled) fadeIn() togetherWith fadeOut() else EnterTransition.None togetherWith ExitTransition.None },
             label = "page-transition",
-            modifier = Modifier.padding(insets)
-        ) { target ->
+            modifier = Modifier.weight(1f).fillMaxHeight()
+          ) { target ->
             when (target) {
                 Page.Welcome -> WelcomeScreen(
                     onGoogle = { unavailableNotice = "Google sign-in will be available after Firebase Authentication is configured." }, onEmail = { go(Page.EmailAuth) }, onPhone = { go(Page.PhoneAuth) }, onSignIn = { go(Page.EmailAuth) }, onPreview = { go(Page.Home) }
@@ -153,6 +176,7 @@ fun LittlePagesApp() {
                 Page.Orders -> OrdersScreen(onBack = ::back)
                 Page.Support -> SupportScreen(onBack = ::back, onSubmit = { unavailableNotice = "Support requests are not connected yet. Your message has not been sent." })
             }
+          }
         }
 
         if (premiumPrompt) {
@@ -166,17 +190,19 @@ fun LittlePagesApp() {
 
 @Composable
 private fun WelcomeScreen(onGoogle: () -> Unit, onEmail: () -> Unit, onPhone: () -> Unit, onSignIn: () -> Unit, onPreview: () -> Unit) {
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+      val compactHeight = maxHeight < 520.dp
+      Column(
+        Modifier.widthIn(max = 480.dp).fillMaxWidth().align(Alignment.TopCenter).verticalScroll(rememberScrollState()).padding(horizontal = if (maxWidth < 360.dp) 16.dp else 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Spacer(Modifier.height(34.dp))
+      ) {
+        Spacer(Modifier.height(if (compactHeight) 12.dp else 34.dp))
         BrandMark()
         Spacer(Modifier.height(16.dp))
         AppText("A little world\nof stories", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, color = PagesColors.Ink, lineHeight = 42.sp)
         AppText("A parent account for your family’s reading journey", style = MaterialTheme.typography.bodyLarge, color = PagesColors.Muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 10.dp))
         Spacer(Modifier.height(8.dp))
-        Box(Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(28.dp)).background(Brush.verticalGradient(listOf(PagesColors.Sky, PagesColors.Cream))), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxWidth().height(if (compactHeight) 120.dp else 210.dp).clip(RoundedCornerShape(28.dp)).background(Brush.verticalGradient(listOf(PagesColors.Sky, PagesColors.Cream))), contentAlignment = Alignment.Center) {
             AppText("🌿     🐰📖🐰     🌼", fontSize = 38.sp)
         }
         Spacer(Modifier.height(20.dp))
@@ -192,6 +218,7 @@ private fun WelcomeScreen(onGoogle: () -> Unit, onEmail: () -> Unit, onPhone: ()
             AppText("Sign in", color = PagesColors.Forest, fontWeight = FontWeight.Bold, modifier = Modifier.clickable(onClick = onSignIn).padding(vertical = 12.dp))
         }
         AppText("By continuing, you agree to our Terms and Privacy Policy.", style = MaterialTheme.typography.labelSmall, color = PagesColors.Muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 16.dp, bottom = 20.dp))
+      }
     }
 }
 
@@ -371,18 +398,19 @@ private val sampleStoryPages = listOf(
 
 @Composable
 private fun ReaderScreen(book: Book, mode: String, page: Int, bookmarked: Boolean, onBookmark: () -> Unit, onPage: (Int) -> Unit, onMode: (String) -> Unit, onBack: () -> Unit, onListen: () -> Unit, onPremium: () -> Unit) {
+    val compactHeight = LocalConfiguration.current.screenHeightDp < 480
     Column(Modifier.fillMaxSize().background(Color(0xFFF1EBDD))) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (compactHeight) 2.dp else 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Filled.Close, "Close reader") }
             AppText(book.title, Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             IconButton(onClick = onBookmark) { Icon(if (bookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder, if (bookmarked) "Remove bookmark" else "Add bookmark", tint = PagesColors.Forest) }
             IconButton(onClick = onPremium) { Icon(Icons.Filled.Headphones, "Listen with Premium", tint = PagesColors.Forest) }
         }
         if (mode == "Page turn") {
-            Box(Modifier.weight(1f).fillMaxWidth().padding(14.dp).clip(RoundedCornerShape(22.dp)).background(Brush.verticalGradient(listOf(Color(0xFFDDEBF1), Color(0xFFF5E9D5)))), contentAlignment = Alignment.Center) {
-                Column(Modifier.fillMaxSize().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
-                    AppText(sampleStoryPages[(page - 1) % sampleStoryPages.size], style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, lineHeight = 34.sp, color = PagesColors.Ink)
-                    AppText("🦊", fontSize = 116.sp)
+            Box(Modifier.weight(1f).fillMaxWidth().padding(if (compactHeight) 8.dp else 14.dp).clip(RoundedCornerShape(22.dp)).background(Brush.verticalGradient(listOf(Color(0xFFDDEBF1), Color(0xFFF5E9D5)))), contentAlignment = Alignment.Center) {
+                Column(Modifier.fillMaxSize().padding(if (compactHeight) 12.dp else 22.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
+                    AppText(sampleStoryPages[(page - 1) % sampleStoryPages.size], style = if (compactHeight) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, lineHeight = if (compactHeight) 26.sp else 34.sp, color = PagesColors.Ink)
+                    AppText("🦊", fontSize = if (compactHeight) 56.sp else 116.sp)
                     AppText("The Brave Little Fox", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, color = PagesColors.Ink)
                 }
             }
