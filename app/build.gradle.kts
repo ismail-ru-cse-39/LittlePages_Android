@@ -39,20 +39,12 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
 
-// AGP 9.2 does not expose the outputFileName property yet, so keep AGP's
-// normal artifact intact and create versioned copies after APK builds.
-val versionedDebugApk = tasks.register<Copy>("copyVersionedDebugApk") {
-    val apkName = "LittlePageApp_${buildVersionName}.apk"
-    from(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
-    into(layout.buildDirectory.dir("outputs/named-apk/debug"))
-    rename { apkName }
-}
-
-val versionedReleaseApk = tasks.register<Copy>("copyVersionedReleaseApk") {
-    val apkName = "LittlePageApp_${buildVersionName}.apk"
-    from(fileTree(layout.buildDirectory.dir("outputs/apk/release")) { include("*.apk") })
-    into(layout.buildDirectory.dir("outputs/named-apk/release"))
-    rename { apkName }
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            output.outputFileName.set("LittlePageApp_${buildVersionName}.apk")
+        }
+    }
 }
 
 fun nextVersionName(version: String): String {
@@ -78,11 +70,9 @@ val incrementVersionForNextApk = tasks.register("incrementVersionForNextApk") {
 }
 
 tasks.matching { it.name == "assembleDebug" }.configureEach {
-    finalizedBy(versionedDebugApk)
     finalizedBy(incrementVersionForNextApk)
 }
 
 tasks.matching { it.name == "assembleRelease" }.configureEach {
-    finalizedBy(versionedReleaseApk)
     finalizedBy(incrementVersionForNextApk)
 }

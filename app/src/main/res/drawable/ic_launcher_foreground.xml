@@ -1,0 +1,52 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- A little sprout rises from an open storybook. -->
+    <path
+        android:fillColor="#28644F"
+        android:pathData="M51,31 C45,24 37,24 34,26 C36,34 43,38 51,36 Z" />
+    <path
+        android:fillColor="#3F8065"
+        android:pathData="M55,32 C57,24 65,20 72,22 C71,31 64,36 55,37 Z" />
+    <path
+        android:fillColor="#28644F"
+        android:pathData="M52,33 L56,33 L56,45 L52,45 Z" />
+
+    <!-- Deep green book cover. -->
+    <path
+        android:fillColor="#1E4F3E"
+        android:pathData="M22,43 C22,39 26,37 31,38 L53,44 L53,81 L31,75 C25,74 22,71 22,67 Z" />
+    <path
+        android:fillColor="#28644F"
+        android:pathData="M55,44 L77,38 C82,37 86,39 86,43 L86,67 C86,71 83,74 77,75 L55,81 Z" />
+
+    <!-- Warm cream pages. -->
+    <path
+        android:fillColor="#FFFEFB"
+        android:pathData="M28,44 C34,44 42,46 50,49 L50,74 C42,71 35,69 28,69 Z" />
+    <path
+        android:fillColor="#FBF8F0"
+        android:pathData="M58,49 C66,46 74,44 80,44 L80,69 C73,69 66,71 58,74 Z" />
+
+    <!-- Page lines and center fold. -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M33,51 C38,51 43,53 47,55 M33,58 C38,58 43,60 47,62 M61,55 C66,53 71,51 76,51 M61,62 C66,60 71,58 76,58"
+        android:strokeColor="#B7C9B2"
+        android:strokeLineCap="round"
+        android:strokeWidth="2" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M54,46 L54,77"
+        android:strokeColor="#D8D4C8"
+        android:strokeLineCap="round"
+        android:strokeWidth="2" />
+
+    <!-- Tiny story spark. -->
+    <path
+        android:fillColor="#D49A38"
+        android:pathData="M78,27 C79,31 81,33 85,34 C81,35 79,37 78,41 C77,37 75,35 71,34 C75,33 77,31 78,27 Z" />
+</vector>
