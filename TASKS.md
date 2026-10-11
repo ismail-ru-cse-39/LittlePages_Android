@@ -74,7 +74,7 @@ Resolve these decisions before connecting payments, publishing content, or colle
 - [x] Implement sample Read Along controls: Android TTS, word highlighting (engine word timing with estimated fallback), play/pause, seek, voice, speed, audio focus, and Autoplay pages. Production narration/content timing remains in Phase 5.
 - [x] Persist reader position and manual bookmarks and resume the selected book in the local preview.
 - [x] Associate progress with selected local child profiles and show per-child reading progress; cloud sync remains in Phase 3.
-- [x] Finish the Offline Books preview list, storage/sync status, removal confirmation, and empty state; no files are stored until offline policy and encrypted storage are implemented in Phase 5.
+- [x] Finish the Offline Books preview list, storage/sync status, removal confirmation, and empty state; no customer book files are stored until offline policy and encrypted storage are implemented in Phase 5.
 
 ### Community and family account
 
@@ -115,13 +115,13 @@ Resolve these decisions before connecting payments, publishing content, or colle
 
 ## Phase 5 — Reader, narration, and offline access
 
-- [ ] Select and integrate an Android PDF/ebook rendering approach that supports the approved book format.
-- [ ] Implement page-turn and scroll modes with stable resume positions.
-- [ ] Implement reading progress and bookmark persistence, including offline-first updates and sync conflict handling.
+- [x] Prototype an in-app PDF surface with Android `PdfRenderer`, generated sample pages, loading/error copy, and no export/share controls; approved licensed-book integration remains open.
+- [x] Provide sample page-turn, scroll, and PDF modes with persisted page position; production content integration and multi-device sync remain open.
+- [x] Persist local reading progress and bookmarks across app restarts; offline-first cloud updates and sync conflict handling remain open.
 - [ ] Integrate narration and word-level timing for supported books.
 - [ ] Implement Autoplay pages, speed/voice controls, audio focus, pause/resume, and playback recovery.
 - [ ] Implement authorized offline book storage in app-private storage, with encryption and explicit removal.
-- [ ] Enforce in-app-only PDF reading: no customer export, share, or document download action.
+- [x] Keep the sample PDF reader in-app with no export/share/download actions and enable Android secure-window protection while reading; production access enforcement remains a backend requirement.
 - [ ] Define and implement offline access renewal/expiry behavior from Phase 0 decisions.
 
 **Done when:** supported books open online and offline, progress resumes correctly, and access rules are enforced by the backend and app storage flow.
@@ -139,17 +139,17 @@ Resolve these decisions before connecting payments, publishing content, or colle
 
 ## Phase 7 — Parent community and moderation
 
-- [ ] Enforce parent-account-only posting and group participation.
-- [ ] Implement image upload validation, visibility rules, and removal behavior.
-- [ ] Add report/block flows for posts, comments, users, and groups.
+- [x] Gate local posting and group participation to parent preview accounts; server-side enforcement remains required.
+- [x] Validate selected preview images by MIME type and reported size before display; upload validation, visibility rules, and removal behavior remain open.
+- [x] Add local preview report/block controls for community posts; report/block flows for comments, users, groups, and server moderation remain open.
 - [ ] Build moderator review queues, actions, and audit history in the admin site.
-- [ ] Add community guidelines, consent/privacy messaging, and support escalation.
+- [x] Add community guideline and child-privacy messaging to the local feed; consent records and support escalation remain open.
 
 **Done when:** users can report harmful content and authorized moderators can review and act on reports with an audit trail.
 
 ## Phase 8 — Release readiness and ongoing operations
 
-- [ ] Complete accessibility and English/Bangla content review on supported device sizes.
+- [ ] Complete accessibility and English/Bangla content review on supported device sizes. Reader controls now reflow on narrow screens; full content/accessibility review remains deferred to final QA.
 - [ ] Review privacy disclosures, consent flow, account deletion, and data retention.
 - [ ] Configure production crash/error reporting, dashboards, and support escalation ownership.
 - [ ] Prepare store listing, screenshots, subscription descriptions, and customer support documentation.
@@ -162,10 +162,10 @@ Resolve these decisions before connecting payments, publishing content, or colle
 
 Keep this section current as work proceeds:
 
-- **Current phase:** Phase 2 complete for local Android preview flows; Phase 0 product decisions and Phase 3 service setup block production integrations.
+- **Current phase:** Local reader/community prototypes are in place; approved offline-content policy and backend setup block production reader and community integrations.
 - **Next task:** Define offline-book eligibility, storage limits, access expiry, and removal rules before implementing real offline storage.
 - **Blockers:** Firebase project IDs and app registrations; content catalogue and distribution rights; offline eligibility/expiry policy; free/Premium entitlements; privacy/parent-consent/data-retention approval; physical fulfillment terms; approved moderation rules; applicable digital billing flow. These decisions/integrations remain unchecked.
-- **Completed in this pass:** finished the local auth/onboarding screens, child-specific reading progress, offline list/removal preview, parent feed with local image posts and group discussions, profile/privacy/support surfaces, sample checkout/order history, subscription lifecycle previews, and service recovery flows; previous local browsing/detail/review states, preview account switching, report/block confirmation, and reusable loading/error/retry components remain complete. No Firebase, account, storage, payment, moderation, or support request was connected, and no build was run.
+- **Completed in this pass:** finished the local auth/onboarding screens, child-specific reading progress, offline list/removal preview, parent feed with local image posts and group discussions, profile/privacy/support surfaces, sample checkout/order history, subscription lifecycle previews, and service recovery flows; previous local browsing/detail/review states, preview account switching, report/block confirmation, and reusable loading/error/retry components remain complete. Added an Android `PdfRenderer` preview backed by a generated sample PDF in the app cache; this is placeholder content, not a customer book. No Firebase, account, storage, payment, moderation, or support request was connected, and no build was run.
 - **Important limit:** local reading data uses a placeholder profile ID and has no cloud sync. Read-along speaks sample text using an installed English Android TTS voice; exact word timing depends on the engine and falls back to estimated highlighting. No licensed book text/audio/timing is connected. Sample catalogue availability is local metadata. Community images are not uploaded. Authentication, payment, real book content, offline content storage, and Firebase services are not connected. Network status is monitored, but data fetching and service-specific retries are not yet implemented.
 - **Decision log (2026-10-11):** English and Bangla are launch languages. PDFs are in-app only for every customer, including Premium. Premium narration/word highlighting is a subscription feature. When a physical edition is available, offer both in-app PDF access and the printed book. Requested Bangladesh payment methods are bKash and Visa. Offline access is required; entitlement, expiry, and storage policy remain open.
 

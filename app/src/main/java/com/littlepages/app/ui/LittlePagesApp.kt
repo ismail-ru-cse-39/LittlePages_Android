@@ -3,11 +3,13 @@ package com.littlepages.app.ui
 import android.app.Activity
 import android.animation.ValueAnimator
 import android.content.Context
+import android.content.ContextWrapper
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,6 +24,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -42,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -55,6 +59,7 @@ import com.littlepages.app.data.ReaderProgressStore
 import com.littlepages.app.data.AndroidNarrationEngine
 import com.littlepages.app.data.NarrationAudioFocus
 import com.littlepages.app.data.NarrationState
+import com.littlepages.app.data.SamplePdfRenderer
 import com.littlepages.app.AppLanguage
 import com.littlepages.app.R
 import com.littlepages.app.ui.components.*
@@ -65,6 +70,9 @@ import com.littlepages.app.ui.theme.PagesSpacing
 import com.littlepages.app.ui.theme.PagesSizes
 import com.littlepages.app.ui.theme.PagesShapes
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private enum class Page {
     Welcome, EmailAuth, PasswordReset, PhoneAuth, PhoneCode, ParentSetup, Home, Library, Search, BookDetails, Reader, Listen, ListenPreview,
@@ -150,6 +158,7 @@ fun LittlePagesApp() {
     var bookmarked by remember(selectedBook.title, activeChildId, currentPage) { mutableStateOf(progressStore.isBookmarked(activeChildId, selectedBook.title, currentPage)) }
     val communityPosts = remember { mutableStateListOf<CommunityEntry>() }
     val groupPosts = remember { mutableStateListOf<CommunityEntry>() }
+    val blockedCommunityAuthors = remember { mutableStateListOf<String>() }
     val offlineBookTitles = remember { mutableStateListOf(books[0].title, books[1].title) }
     val purchaseHistory = remember { mutableStateListOf<PurchasePreview>() }
     val savedBooks = remember { mutableStateListOf<String>() }
@@ -223,8 +232,8 @@ fun LittlePagesApp() {
                 Page.Reader -> ReaderScreen(book = selectedBook, mode = readerMode, page = currentPage, bookmarked = bookmarked, onBookmark = { bookmarked = progressStore.toggleBookmark(activeChildId, selectedBook.title, currentPage) }, onPage = { currentPage = it; progressStore.savePage(activeChildId, selectedBook.title, it) }, onMode = { readerMode = it }, onBack = ::back, onListen = ::openPremiumFeature, onPremium = { premiumPrompt = true })
                 Page.Listen -> ListenScreen(book = selectedBook, page = currentPage, autoplay = autoplay, onAutoplay = { autoplay = it }, onPageAdvance = { if (currentPage < 24) { currentPage += 1; progressStore.savePage(activeChildId, selectedBook.title, currentPage) } }, onBack = ::back)
                 Page.ListenPreview -> ListenScreen(book = selectedBook, page = currentPage, autoplay = false, onAutoplay = {}, onPageAdvance = {}, onBack = ::back, previewOnly = true)
-                Page.Community -> CommunityScreen(posts = communityPosts, onGroup = { if (guestMode) unavailableNotice = "Create a parent account to join a group." else go(Page.Group) }, onCreate = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
-                Page.Group -> GroupScreen(posts = groupPosts, onBack = ::back, onCreatePost = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
+                Page.Community -> CommunityScreen(posts = communityPosts, blockedAuthors = blockedCommunityAuthors, onBlockAuthor = { if (it !in blockedCommunityAuthors) blockedCommunityAuthors.add(it) }, onGroup = { if (guestMode) unavailableNotice = "Create a parent account to join a group." else go(Page.Group) }, onCreate = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
+                Page.Group -> GroupScreen(posts = groupPosts, blockedAuthors = blockedCommunityAuthors, onBlockAuthor = { if (it !in blockedCommunityAuthors) blockedCommunityAuthors.add(it) }, canParticipate = !guestMode, onBack = ::back, onCreatePost = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
                 Page.CreatePost -> CreatePostScreen(onBack = ::back, onPost = { post -> if (stack.getOrNull(stack.lastIndex - 1) == Page.Group) groupPosts.add(0, post) else communityPosts.add(0, post); back() })
                 Page.Reviews -> ReviewsScreen(book = selectedBook, onBack = ::back)
                 Page.Offline -> OfflineScreen(books = books.filter { it.title in offlineBookTitles }, onBack = ::back, onBrowse = { stack.clear(); stack.add(Page.Library) }, onRemove = { offlineBookTitles.remove(it.title) }, onRetrySync = { recoveryType = "offline"; go(Page.Recovery) })
@@ -532,7 +541,22 @@ private val sampleStoryPages = listOf(
 
 @Composable
 private fun ReaderScreen(book: Book, mode: String, page: Int, bookmarked: Boolean, onBookmark: () -> Unit, onPage: (Int) -> Unit, onMode: (String) -> Unit, onBack: () -> Unit, onListen: () -> Unit, onPremium: () -> Unit) {
-    val compactHeight = LocalConfiguration.current.screenHeightDp < PagesBreakpoints.ReaderCompactHeight.value.toInt()
+    val configuration = LocalConfiguration.current
+    val compactHeight = configuration.screenHeightDp < PagesBreakpoints.ReaderCompactHeight.value.toInt()
+    val compactWidth = configuration.screenWidthDp < 520
+    val context = LocalContext.current
+    DisposableEffect(context) {
+        var activityContext: Context? = context
+        while (activityContext != null && activityContext !is Activity && activityContext is ContextWrapper) activityContext = activityContext.baseContext
+        val window = (activityContext as? Activity)?.window
+        window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+    }
+    var pdfFailed by remember(page, mode) { mutableStateOf(false) }
+    val pdfBitmap by produceState<android.graphics.Bitmap?>(null, page, mode) {
+        pdfFailed = false
+        value = if (mode == "PDF") withContext(Dispatchers.IO) { runCatching { SamplePdfRenderer.render(context, page) }.onFailure { pdfFailed = true }.getOrNull() } else null
+    }
     Column(Modifier.fillMaxSize().background(Color(0xFFF1EBDD))) {
         Row(Modifier.fillMaxWidth().padding(horizontal = PagesSpacing.Compact, vertical = if (compactHeight) PagesSpacing.Micro else PagesSpacing.Small), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Filled.Close, "Close reader") }
@@ -548,7 +572,7 @@ private fun ReaderScreen(book: Book, mode: String, page: Int, bookmarked: Boolea
                     AppText("The Brave Little Fox", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, color = PagesColors.Ink)
                 }
             }
-        } else {
+        } else if (mode == "Scroll") {
             Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = PagesSpacing.CardContent).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(PagesSpacing.Compact)) {
                 (page..(page + 2).coerceAtMost(24)).forEach { scrollPage ->
                     CardSurface(Modifier.fillMaxWidth(), color = PagesColors.Paper) {
@@ -558,13 +582,30 @@ private fun ReaderScreen(book: Book, mode: String, page: Int, bookmarked: Boolea
                     }
                 }
             }
+        } else {
+            Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = PagesSpacing.CardContent), contentAlignment = Alignment.Center) {
+                if (pdfBitmap != null) Image(bitmap = pdfBitmap!!.asImageBitmap(), contentDescription = "Sample PDF page $page", modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(PagesShapes.ReaderPage)))
+                else AppText(if (pdfFailed) "The sample PDF could not be opened. Switch modes and try again." else "Preparing the sample PDF…", color = PagesColors.Muted, textAlign = TextAlign.Center)
+            }
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = PagesSpacing.Medium), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            IconButton(onClick = { onPage((page - 1).coerceAtLeast(1)) }, enabled = page > 1) { Icon(Icons.Filled.ChevronLeft, "Previous page", tint = PagesColors.Forest) }
-            AppText("$page / 24", fontWeight = FontWeight.SemiBold)
-            TextButton(onClick = { onMode(if (mode == "Page turn") "Scroll" else "Page turn") }) { AppText(mode, color = PagesColors.Forest) }
-            Button(onClick = onListen, modifier = Modifier.heightIn(min = PagesSizes.MinimumTouchTarget), shape = RoundedCornerShape(PagesShapes.LargeCard), colors = ButtonDefaults.buttonColors(containerColor = PagesColors.Forest), contentPadding = PaddingValues(horizontal = PagesSpacing.Compact, vertical = PagesSpacing.Small)) { Icon(Icons.AutoMirrored.Filled.VolumeUp, null, tint = Color.White, modifier = Modifier.size(PagesSizes.IconSmall)); AppText(" Listen", color = Color.White, fontWeight = FontWeight.SemiBold) }
-            IconButton(onClick = { onPage((page + 1).coerceAtMost(24)) }, enabled = page < 24) { Icon(Icons.Filled.ChevronRight, "Next page", tint = PagesColors.Forest) }
+        if (compactWidth) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = PagesSpacing.Medium), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { onPage((page - 1).coerceAtLeast(1)) }, enabled = page > 1) { Icon(Icons.Filled.ChevronLeft, "Previous page", tint = PagesColors.Forest) }
+                Spacer(Modifier.weight(1f)); AppText("$page / 24", fontWeight = FontWeight.SemiBold); Spacer(Modifier.weight(1f))
+                IconButton(onClick = { onPage((page + 1).coerceAtMost(24)) }, enabled = page < 24) { Icon(Icons.Filled.ChevronRight, "Next page", tint = PagesColors.Forest) }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = PagesSpacing.Medium), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                TextButton(onClick = { onMode(when (mode) { "Page turn" -> "Scroll"; "Scroll" -> "PDF"; else -> "Page turn" }) }) { AppText("Mode: $mode", color = PagesColors.Forest) }
+                Button(onClick = onListen, modifier = Modifier.heightIn(min = PagesSizes.MinimumTouchTarget), shape = RoundedCornerShape(PagesShapes.LargeCard), colors = ButtonDefaults.buttonColors(containerColor = PagesColors.Forest)) { Icon(Icons.AutoMirrored.Filled.VolumeUp, null, tint = Color.White, modifier = Modifier.size(PagesSizes.IconSmall)); AppText(" Listen", color = Color.White, fontWeight = FontWeight.SemiBold) }
+            }
+        } else {
+            Row(Modifier.fillMaxWidth().padding(horizontal = PagesSpacing.Medium), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                IconButton(onClick = { onPage((page - 1).coerceAtLeast(1)) }, enabled = page > 1) { Icon(Icons.Filled.ChevronLeft, "Previous page", tint = PagesColors.Forest) }
+                AppText("$page / 24", fontWeight = FontWeight.SemiBold)
+                TextButton(onClick = { onMode(when (mode) { "Page turn" -> "Scroll"; "Scroll" -> "PDF"; else -> "Page turn" }) }) { AppText(mode, color = PagesColors.Forest) }
+                Button(onClick = onListen, modifier = Modifier.heightIn(min = PagesSizes.MinimumTouchTarget), shape = RoundedCornerShape(PagesShapes.LargeCard), colors = ButtonDefaults.buttonColors(containerColor = PagesColors.Forest), contentPadding = PaddingValues(horizontal = PagesSpacing.Compact, vertical = PagesSpacing.Small)) { Icon(Icons.AutoMirrored.Filled.VolumeUp, null, tint = Color.White, modifier = Modifier.size(PagesSizes.IconSmall)); AppText(" Listen", color = Color.White, fontWeight = FontWeight.SemiBold) }
+                IconButton(onClick = { onPage((page + 1).coerceAtMost(24)) }, enabled = page < 24) { Icon(Icons.Filled.ChevronRight, "Next page", tint = PagesColors.Forest) }
+            }
         }
         Spacer(Modifier.height(PagesSpacing.ControlGap))
     }
@@ -711,7 +752,8 @@ private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (
 }
 
 @Composable
-private fun CommunityScreen(posts: List<CommunityEntry>, onGroup: () -> Unit, onCreate: () -> Unit) {
+private fun CommunityScreen(posts: List<CommunityEntry>, blockedAuthors: List<String>, onBlockAuthor: (String) -> Unit, onGroup: () -> Unit, onCreate: () -> Unit) {
+    var showGuidelines by remember { mutableStateOf(false) }
     val feedCategories = listOf("For you", "Discussions", "Tips", "Activities")
     var selectedFeed by remember { mutableStateOf(feedCategories.first()) }
     val examplePosts = listOf(
@@ -719,37 +761,40 @@ private fun CommunityScreen(posts: List<CommunityEntry>, onGroup: () -> Unit, on
         CommunityEntry("Looking for gentle Bangla stories for a 5-year-old. What are your family favourites?", category = "Discussions", author = "Amina Rahman", time = "Yesterday"),
         CommunityEntry("Our library hosted a lovely family story hour this weekend.", category = "Activities", author = "James Carter", time = "3 days ago")
     )
-    val feedPosts = (posts + examplePosts).filter { selectedFeed == "For you" || it.category == selectedFeed }
-    MainPage(title = "Parent community", subtitle = "A kind space to share the reading journey.", action = { IconButton(onClick = onCreate) { Icon(Icons.Filled.Add, "Create post", tint = PagesColors.Forest) } }) {
+    val feedPosts = (posts + examplePosts).filter { it.author !in blockedAuthors && (selectedFeed == "For you" || it.category == selectedFeed) }
+    MainPage(title = "Parent community", subtitle = "A kind space to share the reading journey.", action = { Row { IconButton(onClick = { showGuidelines = true }) { Icon(Icons.Filled.Info, "Community guidelines", tint = PagesColors.Forest) }; IconButton(onClick = onCreate) { Icon(Icons.Filled.Add, "Create post", tint = PagesColors.Forest) } } }) {
+        AppText("Community guidelines: protect children’s privacy, be kind, and share only images you have permission to post. Report content that feels unsafe. Moderation is not connected in this preview.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
         CardSurface(Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onCreate), color = PagesColors.Sage) { Row(verticalAlignment = Alignment.CenterVertically) { Avatar("E"); AppText(" Share a thought with parents…", color = PagesColors.Muted, modifier = Modifier.weight(1f).padding(horizontal = PagesSpacing.ControlGap)); Icon(Icons.Filled.AddPhotoAlternate, null, tint = PagesColors.Forest) } }
         Spacer(Modifier.height(PagesSpacing.Medium)); ChipRow(feedCategories, selectedIndex = feedCategories.indexOf(selectedFeed), onSelect = { selectedFeed = feedCategories[it] })
         Spacer(Modifier.height(PagesSpacing.CardContent)); SectionTitle("Groups to explore", "See all", onClick = onGroup)
         Row(horizontalArrangement = Arrangement.spacedBy(PagesSpacing.ControlGap)) { GroupTile("Raising Kind Kids", "312 parents", "🌱", onGroup); GroupTile("Bedtime Stories", "186 parents", "🌙", onGroup) }
         Spacer(Modifier.height(PagesSpacing.SectionGap)); SectionTitle("Recent posts")
         if (feedPosts.isEmpty()) EmptyState(Icons.Filled.Forum, "No posts in this feed yet", "Choose another topic or start a conversation.", "Create a post", onCreate)
-        feedPosts.forEach { post -> CommunityPost(post.author, post.time + if (post.author == "You") " · preview only" else "", post.body, if (post.hasPhoto) "🖼️" else "", onGroup, imageUri = post.imageUri) }
+        feedPosts.forEach { post -> CommunityPost(post.author, post.time + if (post.author == "You") " · preview only" else "", post.body, if (post.hasPhoto) "🖼️" else "", onGroup, imageUri = post.imageUri, onBlock = { onBlockAuthor(post.author) }) }
     }
+    if (showGuidelines) AlertDialog(onDismissRequest = { showGuidelines = false }, title = { AppText("Community guidelines") }, text = { AppText("Keep children’s names, schools, locations, and contact details private. Treat other families with kindness. Share only images you have permission to post, and report unsafe or inappropriate content. Reports and moderation are preview-only until the community service is connected.") }, confirmButton = { TextButton(onClick = { showGuidelines = false }) { AppText("Got it") } })
 }
 
 @Composable
-private fun GroupScreen(posts: List<CommunityEntry>, onBack: () -> Unit, onCreatePost: () -> Unit) {
+private fun GroupScreen(posts: List<CommunityEntry>, blockedAuthors: List<String>, onBlockAuthor: (String) -> Unit, canParticipate: Boolean, onBack: () -> Unit, onCreatePost: () -> Unit) {
     var reply by remember { mutableStateOf("") }
     var selectedTab by remember { mutableStateOf("Discussion") }
     val replies = remember { mutableStateListOf<String>() }
     PageScaffold(onBack, "Raising Kind Kids", action = { IconButton(onClick = onCreatePost) { Icon(Icons.Filled.Add, "Create discussion") } }) {
-        var joined by remember { mutableStateOf(true) }
-        CardSurface(Modifier.fillMaxWidth(), color = PagesColors.Sage) { Column { AppText("🌱  Raising Kind Kids", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); AppText("312 parents · Stories and ideas for caring families", color = PagesColors.Muted, modifier = Modifier.padding(top = PagesSpacing.ExtraSmall)); TextButton(onClick = { joined = !joined }, modifier = Modifier.align(Alignment.End)) { AppText(if (joined) "Joined · Leave group" else "Join group", color = PagesColors.Forest, fontWeight = FontWeight.SemiBold) } } }
+        var joined by remember { mutableStateOf(false) }
+        CardSurface(Modifier.fillMaxWidth(), color = PagesColors.Sage) { Column { AppText("🌱  Raising Kind Kids", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); AppText("312 parents · Stories and ideas for caring families", color = PagesColors.Muted, modifier = Modifier.padding(top = PagesSpacing.ExtraSmall)); TextButton(onClick = { if (canParticipate) joined = !joined }, modifier = Modifier.align(Alignment.End), enabled = canParticipate) { AppText(if (joined) "Joined · Leave group" else "Join group", color = PagesColors.Forest, fontWeight = FontWeight.SemiBold) } } }
         val tabs = listOf("Discussion", "Resources", "Members")
         ChipRow(tabs, selectedIndex = tabs.indexOf(selectedTab), onSelect = { selectedTab = tabs[it] })
         when (selectedTab) {
             "Discussion" -> {
                 if (!joined) {
-                    EmptyState(Icons.Filled.Groups, "Join the conversation", "Join this group to read discussions and share replies.", "Join group", { joined = true })
+                    if (canParticipate) EmptyState(Icons.Filled.Groups, "Join the conversation", "Join this group to read discussions and share replies.", "Join group", { joined = true })
+                    else EmptyState(Icons.Filled.Groups, "Parent account required", "Sign in to a parent account to participate in this group.")
                 } else {
                     SectionTitle("Latest discussion")
-                    CommunityPost("Priya Sharma", "3 days ago", "How do you talk to your kids about kindness when it’s hard? We read books that show different perspectives and then chat at bedtime.", "", null)
-                    CommunityPost("James Carter", "2 days ago", "We use the ‘kind choices’ language after reading together. It gives our son a simple way to reflect.", "", null)
-                    posts.forEach { post -> CommunityPost(post.author, post.time + " · preview only", post.body, if (post.hasPhoto) "🖼️" else "", null, imageUri = post.imageUri) }
+                    if ("Priya Sharma" !in blockedAuthors) CommunityPost("Priya Sharma", "3 days ago", "How do you talk to your kids about kindness when it’s hard? We read books that show different perspectives and then chat at bedtime.", "", null, onBlock = { onBlockAuthor("Priya Sharma") })
+                    if ("James Carter" !in blockedAuthors) CommunityPost("James Carter", "2 days ago", "We use the ‘kind choices’ language after reading together. It gives our son a simple way to reflect.", "", null, onBlock = { onBlockAuthor("James Carter") })
+                    posts.filter { it.author !in blockedAuthors }.forEach { post -> CommunityPost(post.author, post.time + " · preview only", post.body, if (post.hasPhoto) "🖼️" else "", null, imageUri = post.imageUri, onBlock = { onBlockAuthor(post.author) }) }
                     replies.forEach { message -> CommunityPost("You", "Just now", message, "", null) }
                     OutlineButton("Start a discussion", Icons.Filled.Edit, onCreatePost)
                     OutlinedTextField(value = reply, onValueChange = { reply = it }, placeholder = { AppText("Write a reply…") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Tag), trailingIcon = { IconButton(onClick = { if (reply.isNotBlank()) { replies.add(reply.trim()); reply = "" } }, enabled = reply.isNotBlank()) { Icon(Icons.AutoMirrored.Filled.Send, "Send reply", tint = PagesColors.Forest) } })
@@ -770,10 +815,40 @@ private fun GroupScreen(posts: List<CommunityEntry>, onBack: () -> Unit, onCreat
 
 @Composable
 private fun CreatePostScreen(onBack: () -> Unit, onPost: (CommunityEntry) -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var post by remember { mutableStateOf("") }
     var selectedPhoto by remember { mutableStateOf<android.net.Uri?>(null) }
+    var photoError by remember { mutableStateOf<String?>(null) }
     var selectedCategory by remember { mutableStateOf("Stories") }
-    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { selectedPhoto = it }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val (mimeType, withinLimit) = withContext(Dispatchers.IO) {
+                val detectedType = context.contentResolver.getType(uri)
+                val size = runCatching { context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } }.getOrNull() ?: -1L
+                val acceptableSize = if (size >= 0L) size <= 8L * 1024L * 1024L else runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        val buffer = ByteArray(8192)
+                        var total = 0L
+                        while (true) {
+                            val count = stream.read(buffer)
+                            if (count == -1) break
+                            total += count
+                            if (total > 8L * 1024L * 1024L) break
+                        }
+                        total <= 8L * 1024L * 1024L
+                    } ?: false
+                }.getOrDefault(false)
+                detectedType to acceptableSize
+            }
+            when {
+                mimeType !in setOf("image/jpeg", "image/png", "image/webp") -> photoError = "Choose a JPEG, PNG, or WebP image."
+                !withinLimit -> photoError = "Choose an image smaller than 8 MB. Its size must be readable to check this limit."
+                else -> { selectedPhoto = uri; photoError = null }
+            }
+        }
+    }
     PageScaffold(onBack, "Create a post", action = { TextButton(onClick = { if (post.isNotBlank()) onPost(CommunityEntry(post.trim(), selectedPhoto, selectedCategory)) }, enabled = post.isNotBlank()) { AppText("Post", color = PagesColors.Forest, fontWeight = FontWeight.Bold) } }) {
         CardSurface(Modifier.fillMaxWidth()) { Row(verticalAlignment = Alignment.CenterVertically) { Avatar("E"); Column(Modifier.padding(start = PagesSpacing.Compact)) { AppText("Emma’s parent", fontWeight = FontWeight.SemiBold); AppText("Posting as a parent", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) } } }
         OutlinedTextField(value = post, onValueChange = { post = it }, placeholder = { AppText("What would you like to share?") }, modifier = Modifier.fillMaxWidth().height(PagesSizes.PostInputHeight), shape = RoundedCornerShape(PagesShapes.Card))
@@ -785,6 +860,7 @@ private fun CreatePostScreen(onBack: () -> Unit, onPost: (CommunityEntry) -> Uni
         PrimaryButton("Preview post", Icons.AutoMirrored.Filled.Send) { if (post.isNotBlank()) onPost(CommunityEntry(post.trim(), selectedPhoto, selectedCategory)) }
         AppText("Posts are only kept for this app session until the community service is configured.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
     }
+    photoError?.let { message -> AlertDialog(onDismissRequest = { photoError = null }, title = { AppText("Image not accepted") }, text = { AppText(message) }, confirmButton = { TextButton(onClick = { photoError = null }) { AppText("Choose another") } }) }
 }
 
 @Composable

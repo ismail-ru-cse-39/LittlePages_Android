@@ -173,11 +173,16 @@ internal fun GroupTile(title: String, members: String, emoji: String, onClick: (
 }
 
 @Composable
-internal fun CommunityPost(name: String, time: String, body: String, photo: String, onClick: (() -> Unit)?, imageUri: Uri? = null) {
+internal fun CommunityPost(name: String, time: String, body: String, photo: String, onClick: (() -> Unit)?, imageUri: Uri? = null, onReport: (() -> Unit)? = null, onBlock: (() -> Unit)? = null) {
     var liked by remember(name, time, body) { mutableStateOf(false) }
     var likeCount by remember(name, time, body) { mutableIntStateOf(24) }
+    var showOptions by remember(name, time, body) { mutableStateOf(false) }
+    var showReport by remember(name, time, body) { mutableStateOf(false) }
+    var showBlock by remember(name, time, body) { mutableStateOf(false) }
+    var hidden by remember(name, time, body) { mutableStateOf(false) }
+    if (hidden) return
     CardSurface(Modifier.fillMaxWidth().padding(bottom = PagesSpacing.ControlGap)) {
-        Row(verticalAlignment = Alignment.CenterVertically) { Avatar(name.first().toString()); Column(Modifier.padding(start = PagesSpacing.ControlGap).weight(1f)) { AppText(name, fontWeight = FontWeight.Bold); AppText(time, color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall) }; Icon(Icons.Filled.MoreHoriz, "Post options", tint = PagesColors.Muted) }
+        Row(verticalAlignment = Alignment.CenterVertically) { Avatar(name.first().toString()); Column(Modifier.padding(start = PagesSpacing.ControlGap).weight(1f)) { AppText(name, fontWeight = FontWeight.Bold); AppText(time, color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall) }; Box { IconButton(onClick = { showOptions = true }) { Icon(Icons.Filled.MoreHoriz, "Post options", tint = PagesColors.Muted) }; DropdownMenu(expanded = showOptions, onDismissRequest = { showOptions = false }) { DropdownMenuItem(text = { AppText("Report post") }, onClick = { showOptions = false; if (onReport != null) onReport() else showReport = true }); DropdownMenuItem(text = { AppText("Block this parent") }, onClick = { showOptions = false; if (onBlock != null) onBlock() else showBlock = true }) } } }
         AppText(body, modifier = Modifier.padding(top = PagesSpacing.Compact), style = MaterialTheme.typography.bodyMedium)
         if (imageUri != null) CommunityPostImage(imageUri)
         else if (photo.isNotBlank()) Box(Modifier.fillMaxWidth().padding(top = PagesSpacing.ControlGap).height(PagesSizes.CommunityImageHeight).clip(RoundedCornerShape(PagesShapes.Control)).background(PagesColors.Sage), contentAlignment = Alignment.Center) { AppText(photo, fontSize = 56.sp) }
@@ -191,6 +196,8 @@ internal fun CommunityPost(name: String, time: String, body: String, photo: Stri
             AppText("Share", color = PagesColors.Forest)
         }
     }
+    if (showReport) AlertDialog(onDismissRequest = { showReport = false }, title = { AppText("Report post") }, text = { AppText("Reports are saved only in this local preview. No moderation team receives them yet.") }, confirmButton = { TextButton(onClick = { showReport = false }) { AppText("Done") } })
+    if (showBlock) AlertDialog(onDismissRequest = { showBlock = false }, title = { AppText("Block $name?") }, text = { AppText("This hides this post in the current preview screen. The block is not synced to an account.") }, confirmButton = { TextButton(onClick = { hidden = true; showBlock = false }) { AppText("Block") } }, dismissButton = { TextButton(onClick = { showBlock = false }) { AppText("Cancel") } })
 }
 
 @Composable
