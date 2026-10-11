@@ -21,6 +21,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.sp
 import com.littlepages.app.ui.AppText
 import com.littlepages.app.ui.Book
@@ -100,7 +103,7 @@ internal fun OrDivider() {
 
 @Composable
 internal fun SearchBarCard(onClick: () -> Unit) {
-    CardSurface(Modifier.fillMaxWidth().clickable(onClick = onClick)) { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.Search, null, tint = PagesColors.Muted); AppText("  Search books, characters, or topics", color = PagesColors.Muted, style = MaterialTheme.typography.bodyMedium) } }
+    CardSurface(Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick)) { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.Search, null, tint = PagesColors.Muted); AppText("  Search books, characters, or topics", color = PagesColors.Muted, style = MaterialTheme.typography.bodyMedium) } }
 }
 
 @Composable
@@ -128,7 +131,7 @@ internal fun ChipRow(labels: List<String>, selectedIndex: Int = 0, onSelect: ((I
 
 @Composable
 internal fun BookCover(book: Book, modifier: Modifier = Modifier) {
-    Box(modifier.clip(RoundedCornerShape(PagesShapes.Control)).background(Brush.verticalGradient(listOf(book.tint, PagesColors.Cream))), contentAlignment = Alignment.Center) {
+    Box(modifier.clip(RoundedCornerShape(PagesShapes.Control)).background(Brush.verticalGradient(listOf(book.tint, PagesColors.Cream))).semantics { contentDescription = "Cover for ${book.title}" }, contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) { AppText(book.emoji, fontSize = 44.sp); AppText(book.title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, color = PagesColors.Ink, modifier = Modifier.padding(horizontal = PagesSpacing.Small, vertical = PagesSpacing.ExtraSmall)) }
     }
 }
@@ -136,13 +139,13 @@ internal fun BookCover(book: Book, modifier: Modifier = Modifier) {
 @Composable
 internal fun BookRow(items: List<Book>, onBook: (Book) -> Unit) {
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(PagesSpacing.Compact)) {
-        items.forEach { book -> Column(Modifier.width(PagesSizes.CatalogueCardWidth).clickable { onBook(book) }) { BookCover(book, Modifier.fillMaxWidth().height(PagesSizes.CatalogueCoverHeight)); AppText(book.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = PagesSpacing.Small)); AppText(book.age, color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall) } }
+        items.forEach { book -> Column(Modifier.width(PagesSizes.CatalogueCardWidth).clickable(role = Role.Button) { onBook(book) }) { BookCover(book, Modifier.fillMaxWidth().height(PagesSizes.CatalogueCoverHeight)); AppText(book.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = PagesSpacing.Small)); AppText(book.age, color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall) } }
     }
 }
 
 @Composable
 internal fun BookListRow(book: Book, trailing: String? = null, onClick: () -> Unit) {
-    CardSurface(Modifier.fillMaxWidth().padding(bottom = PagesSpacing.Small).clickable(onClick = onClick)) {
+    CardSurface(Modifier.fillMaxWidth().padding(bottom = PagesSpacing.Small).clickable(role = Role.Button, onClick = onClick)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             BookCover(book, Modifier.size(PagesSizes.BookListCover))
             Column(Modifier.weight(1f).padding(start = PagesSpacing.Compact)) { AppText(book.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis); AppText("${book.author} · ${book.age}", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall); AppText("⭐ ${book.rating} · English · বাংলা", color = PagesColors.Gold, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = PagesSpacing.ExtraSmall)) }
@@ -158,7 +161,7 @@ internal fun Avatar(initial: String) {
 
 @Composable
 internal fun GroupTile(title: String, members: String, emoji: String, onClick: () -> Unit) {
-    CardSurface(Modifier.width(PagesSizes.GroupCardWidth).clickable(onClick = onClick), color = PagesColors.Sky) { AppText(emoji, fontSize = 26.sp); AppText(title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = PagesSpacing.Dense)); AppText(members, color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall); AppText("Join group →", color = PagesColors.Forest, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = PagesSpacing.Dense)) }
+    CardSurface(Modifier.width(PagesSizes.GroupCardWidth).clickable(role = Role.Button, onClick = onClick), color = PagesColors.Sky) { AppText(emoji, fontSize = 26.sp); AppText(title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = PagesSpacing.Dense)); AppText(members, color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall); AppText("Join group →", color = PagesColors.Forest, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = PagesSpacing.Dense)) }
 }
 
 @Composable
@@ -170,9 +173,12 @@ internal fun CommunityPost(name: String, time: String, body: String, photo: Stri
         AppText(body, modifier = Modifier.padding(top = PagesSpacing.Compact), style = MaterialTheme.typography.bodyMedium)
         if (photo.isNotBlank()) Box(Modifier.fillMaxWidth().padding(top = PagesSpacing.ControlGap).height(PagesSizes.CommunityImageHeight).clip(RoundedCornerShape(PagesShapes.Control)).background(PagesColors.Sage), contentAlignment = Alignment.Center) { AppText(photo, fontSize = 56.sp) }
         Row(Modifier.padding(top = PagesSpacing.ControlGap), verticalAlignment = Alignment.CenterVertically) {
-            AppText(if (liked) "♥  $likeCount" else "♡  $likeCount", modifier = Modifier.clickable { liked = !liked; likeCount += if (liked) 1 else -1 }, color = if (liked) PagesColors.Forest else PagesColors.Muted)
-            val commentsModifier = Modifier.weight(1f).then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            AppText("    ◯  8 comments", modifier = commentsModifier, color = PagesColors.Muted)
+            IconButton(onClick = { liked = !liked; likeCount += if (liked) 1 else -1 }) {
+                Icon(if (liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = if (liked) "Unlike post" else "Like post", tint = if (liked) PagesColors.Forest else PagesColors.Muted)
+            }
+            AppText(likeCount.toString(), color = PagesColors.Muted)
+            if (onClick != null) TextButton(onClick = onClick, modifier = Modifier.weight(1f)) { AppText("8 comments", color = PagesColors.Muted) }
+            else AppText("8 comments", Modifier.weight(1f), color = PagesColors.Muted, textAlign = TextAlign.Center)
             AppText("Share", color = PagesColors.Forest)
         }
     }
@@ -180,7 +186,7 @@ internal fun CommunityPost(name: String, time: String, body: String, photo: Stri
 
 @Composable
 internal fun SettingsRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
-    CardSurface(Modifier.fillMaxWidth().padding(bottom = PagesSpacing.Small).clickable(onClick = onClick)) {
+    CardSurface(Modifier.fillMaxWidth().padding(bottom = PagesSpacing.Small).clickable(role = Role.Button, onClick = onClick)) {
         Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = PagesColors.Forest); Column(Modifier.weight(1f).padding(horizontal = PagesSpacing.Compact)) { AppText(title, fontWeight = FontWeight.SemiBold); if (subtitle.isNotBlank()) AppText(subtitle, color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }; Icon(Icons.Filled.ChevronRight, null, tint = PagesColors.Muted) }
     }
 }
@@ -199,6 +205,28 @@ internal fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, t
             AppText(message, style = MaterialTheme.typography.bodyMedium, color = PagesColors.Muted, textAlign = TextAlign.Center, modifier = Modifier.padding(top = PagesSpacing.Dense))
             if (actionLabel != null && onAction != null) TextButton(onClick = onAction, modifier = Modifier.padding(top = PagesSpacing.ExtraSmall)) { AppText(actionLabel, color = PagesColors.Forest) }
         }
+    }
+}
+
+@Composable
+internal fun RemoteLoadingState(message: String, modifier: Modifier = Modifier) {
+    CardSurface(modifier.fillMaxWidth(), color = PagesColors.Sage) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(PagesSpacing.Compact)) {
+            CircularProgressIndicator(color = PagesColors.Forest, modifier = Modifier.size(PagesSizes.IconMedium), strokeWidth = PagesSpacing.Micro)
+            AppText(message, color = PagesColors.Ink, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@Composable
+internal fun RemoteErrorState(title: String, message: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+    CardSurface(modifier.fillMaxWidth(), color = PagesColors.Peach) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.CloudOff, contentDescription = null, tint = PagesColors.Error, modifier = Modifier.size(PagesSizes.IconMedium))
+            AppText(title, color = PagesColors.Ink, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = PagesSpacing.ControlGap))
+        }
+        AppText(message, color = PagesColors.Ink, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = PagesSpacing.Small))
+        OutlineButton("Try again", Icons.Filled.Refresh, onRetry)
     }
 }
 

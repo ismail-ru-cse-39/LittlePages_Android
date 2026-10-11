@@ -23,7 +23,8 @@ object PagesColors {
     val Sky = Color(0xFFE4EFF2)
     val Muted = Color(0xFF59675E)
     val Line = Color(0xFFE8E5DC)
-    val Gold = Color(0xFFD49A38)
+    // Keep rating/award icons readable against the light paper surfaces.
+    val Gold = Color(0xFF805000)
     val Error = Color(0xFF9B4740)
 }
 

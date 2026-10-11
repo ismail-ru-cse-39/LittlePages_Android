@@ -37,7 +37,7 @@ Resolve these decisions before connecting payments, publishing content, or colle
 - [x] Establish route navigation and back behavior, including saving the current route across configuration changes.
 - [x] Add reusable empty states for missing search results, offline books, and orders.
 - [x] Detect changes to Android's validated default network and show an offline status banner.
-- [ ] Add loading and service-specific error/retry UI when remote services are connected.
+- [x] Add reusable loading and service-specific error/retry UI components for remote flows; connect them when remote services are integrated.
 - [x] Adapt shared page widths to compact phones, tablets, and expanded windows; use a navigation rail at wide window sizes and compact welcome/reader layouts at short heights.
 - [x] Centralize spacing and motion and migrate screen spacing, shapes, sizes, and breakpoints into the shared design system.
 - [x] Define shared spacing, shape, size, breakpoint, and page-transition tokens in `ui/theme/Theme.kt`.
@@ -45,8 +45,8 @@ Resolve these decisions before connecting payments, publishing content, or colle
 - [x] Migrate remaining illustration-specific and one-off component dimensions into design tokens.
 - [x] Extract reusable layout, button, card, catalogue, and community primitives into `ui/components`; the palette remains in `ui/theme`.
 - [x] Add Android app-locale switching for English/Bangla and translate fixed app UI copy using system resource locales.
-- [ ] Review localized copy, dynamic catalogue text, and expansion on supported device sizes.
-- [ ] Set accessibility behavior for scalable text, screen readers, contrast, touch targets, and reduced motion.
+- [ ] Review localized copy, dynamic catalogue text, and expansion on supported device sizes. Deferred to final QA; English/Bangla translation is in place.
+- [x] Set accessibility behavior for scalable text, screen readers, contrast, touch targets, and reduced motion: retained system font scaling, added meaningful book-cover and control semantics, made primary interactive cards announce as buttons, gave autoplay its combined label/state context, enlarged text-only actions into standard controls, and strengthened the rating color contrast. Device-level TalkBack and font-scaling review remains in release QA.
 - [x] Set shared body line heights for Bengali/English text and retain Android system font scaling.
 - [x] Use system font fallback for Bengali glyphs and declare English/Bangla app locales; device typography review remains pending.
 - [x] Respect Android's animator scale for screen transitions, keep primary controls at 48dp or larger, and darken muted text for readable contrast on the app's main surfaces.
@@ -61,14 +61,14 @@ Resolve these decisions before connecting payments, publishing content, or colle
 - [x] Add guest browsing entry from sign-in, distinguish the guest profile, and gate key purchase, save, Premium, and parent-profile actions in the prototype.
 - [ ] Finish Google sign-in, email sign-in/sign-up, password reset, and phone verification screens.
 - [ ] Add parent account onboarding and child profile creation/editing.
-- [ ] Add account switching, sign-out, and parent-protected settings/purchase entry.
+- [x] Add account switching, sign-out, and parent-protected settings/purchase entry in the local preview; real account sessions remain in Phase 6.
 
 ### Discovery and reading
 
-- [ ] Finish Home, Library, Search/Filters, Book Details, and Reviews screens.
+- [x] Finish Home, Library, Search/Filters, Book Details, and Reviews screens for the local catalogue and preview flows; live service states depend on backend integration.
 - [x] Wire the Library category/age filters and Search query/suggestion chips to the local sample catalogue, including empty results.
 - [x] Render unavailable titles, in-app PDF availability, and physical-edition availability from catalogue data in Book Details and checkout; Premium/free access policy remains undecided in Phase 0.
-- [ ] Add book detail states for unavailable, free, Premium, PDF in-app, and physical editions.
+- [x] Add book detail states for unavailable, standard/Premium access, PDF in-app, and physical editions; sample access tiers are placeholders pending Phase 0 entitlement decisions.
 - [x] Finish the page-turn and continuous-scroll sample reader controls; actual PDF/ebook rendering remains in Phase 5.
 - [x] Add the Reader **Listen** action and reusable gentle Premium upsell dialog (prototype interaction; subscription is not connected).
 - [x] Implement sample Read Along controls: Android TTS, word highlighting (engine word timing with estimated fallback), play/pause, seek, voice, speed, audio focus, and Autoplay pages. Production narration/content timing remains in Phase 5.
@@ -79,7 +79,7 @@ Resolve these decisions before connecting payments, publishing content, or colle
 ### Community and family account
 
 - [ ] Finish parent feed, create-post/image selection, comments, groups, and discussion screens.
-- [ ] Add review submission, report, block, and confirmation states.
+- [x] Add review submission, report, block, and confirmation states in the local preview; server moderation remains in Phase 6.
 - [ ] Finish Parent Profile, child profiles, language selection, Premium, Orders, Privacy, and Support screens.
 
 ### Purchases and recovery states
@@ -163,9 +163,9 @@ Resolve these decisions before connecting payments, publishing content, or colle
 Keep this section current as work proceeds:
 
 - **Current phase:** Phase 1/2 — Android foundation and local flow prototype
-- **Next task:** Review English/Bangla copy and dynamic catalogue text for truncation and layout expansion on supported device sizes.
+- **Next task:** Finish the Offline Books list, storage status, remove-book flow, and sync status in the local preview; entitlement, expiry, and encrypted-storage policy decisions are still needed for production behavior.
 - **Blockers:** Firebase project IDs and app registrations; content catalogue and distribution rights; offline eligibility/expiry policy; free/Premium entitlements; privacy/parent-consent/data-retention approval; physical fulfillment terms; approved moderation rules; applicable digital billing flow. These decisions/integrations remain unchecked.
-- **Completed in this pass:** user confirmed the responsive UI works on their tested device(s); added validated-network monitoring with an offline banner and updated empty/error-state tracking; made book-detail and checkout formats follow per-title PDF/print availability; added shared spacing, shape, size, breakpoint, and motion tokens and applied them across common layouts and key screens; added guest browsing with account gates; added a vector adaptive launcher icon; retained responsive layouts, narration, reader progress, locale/accessibility foundations, and versioned Firebase contracts; direct APK output now uses `LittlePageApp_<version>.apk`; successful debug build produced `LittlePageApp_1.6.apk`.
+- **Completed in this pass:** completed the local browsing/detail/review UI states, sample standard/Premium book access labels, preview account switching, review report/block confirmation, and reusable remote loading/error/retry components; user confirmed the responsive UI works on their tested device(s); added validated-network monitoring with an offline banner and updated empty/error-state tracking; made book-detail and checkout formats follow per-title PDF/print availability; added shared spacing, shape, size, breakpoint, and motion tokens and applied them across common layouts and key screens; added guest browsing with account gates; added a vector adaptive launcher icon; improved TalkBack labels/roles, interactive target sizing, and rating contrast; retained responsive layouts, narration, reader progress, locale foundations, and versioned Firebase contracts; direct APK output now uses `LittlePageApp_<version>.apk`; successful debug build produced `LittlePageApp_1.6.apk`.
 - **Important limit:** local reading data uses a placeholder profile ID and has no cloud sync. Read-along speaks sample text using an installed English Android TTS voice; exact word timing depends on the engine and falls back to estimated highlighting. No licensed book text/audio/timing is connected. Sample catalogue availability is local metadata. Community images are not uploaded. Authentication, payment, real book content, offline content storage, and Firebase services are not connected. Network status is monitored, but data fetching and service-specific retries are not yet implemented.
 - **Decision log (2026-10-11):** English and Bangla are launch languages. PDFs are in-app only for every customer, including Premium. Premium narration/word highlighting is a subscription feature. When a physical edition is available, offer both in-app PDF access and the printed book. Requested Bangladesh payment methods are bKash and Visa. Offline access is required; entitlement, expiry, and storage policy remain open.
 
