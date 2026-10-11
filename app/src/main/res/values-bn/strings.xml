@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">লিটলপেজেস</string>
+    <string name="nav_home">হোম</string>
+    <string name="nav_library">বইয়ের সংগ্রহ</string>
+    <string name="nav_community">কমিউনিটি</string>
+    <string name="nav_profile">প্রোফাইল</string>
+    <string name="language_english">English</string>
+    <string name="language_bangla">বাংলা</string>
+    <string name="parent_account">অভিভাবক অ্যাকাউন্ট</string>
+    <string name="family_section">পরিবার</string>
+    <string name="account_section">আপনার অ্যাকাউন্ট</string>
+    <string name="child_profiles">শিশুর প্রোফাইল</string>
+    <string name="premium_title">লিটলপেজেস প্রিমিয়াম</string>
+    <string name="language_label">ভাষা</string>
+    <string name="offline_books">অফলাইন বই</string>
+    <string name="orders_label">অর্ডার</string>
+    <string name="support_label">সহায়তা</string>
+    <string name="browse_books">বই দেখুন</string>
+    <string name="no_offline_books">এখনো কোনো অফলাইন বই নেই</string>
+</resources>

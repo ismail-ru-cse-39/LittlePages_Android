@@ -12,7 +12,7 @@ Use the checkboxes below as the project tracker. Mark a task complete only when 
 - [ ] Emulator/device review completed.
 - [ ] Backend, authentication, real book content, payments, and moderation connected.
 
-The current screens use sample data and in-memory navigation. They do not authenticate users, store or play books, upload images, or process orders or payments.
+The current screens mostly use sample data and in-memory navigation. Reader page/bookmark state persists locally under a temporary profile key, but it does not sync. The app does not authenticate users, store or play book content, upload community images, or process orders or payments.
 
 ## Phase 0 — Confirm product rules
 
@@ -35,9 +35,14 @@ Resolve these decisions before connecting payments, publishing content, or colle
 - [x] Sync and build the starter project; align AGP 9.2.1 with Gradle 9.4.1 and resolve the Kotlin compile error.
 - [x] Choose initial app/core/feature/data package boundaries; see `ARCHITECTURE.md` (migration from prototype is pending).
 - [ ] Establish navigation, back behavior, loading, empty, error, and offline UI states.
-- [ ] Move reusable colors, typography, spacing, buttons, fields, cards, and motion into the shared design system.
-- [ ] Add English/Bangla font and layout support, including Bangla line height and text expansion.
+- [ ] Centralize spacing and motion and finish migrating screen styling into the shared design system.
+- [x] Extract reusable layout, button, card, catalogue, and community primitives into `ui/components`; the palette remains in `ui/theme`.
+- [x] Add Android app-locale switching for English/Bangla and translate fixed app UI copy using system resource locales.
+- [ ] Review localized copy, dynamic catalogue text, and expansion on supported device sizes.
 - [ ] Set accessibility behavior for scalable text, screen readers, contrast, touch targets, and reduced motion.
+- [x] Set shared body line heights for Bengali/English text and retain Android system font scaling.
+- [x] Use system font fallback for Bengali glyphs and declare English/Bangla app locales; device typography review remains pending.
+- [x] Respect Android's animator scale for screen transitions, keep primary controls at 48dp or larger, and darken muted text for readable contrast on the app's main surfaces.
 - [ ] Add environment configuration for local development, staging, and production without committing secrets. Blocked on Firebase project/app registrations and provider configuration; secret-handling conventions are documented in `ARCHITECTURE.md`.
 
 **Done when:** the app starts on supported Android devices, navigation is consistent, and feature screens use shared components rather than private styling.
@@ -53,11 +58,13 @@ Resolve these decisions before connecting payments, publishing content, or colle
 ### Discovery and reading
 
 - [ ] Finish Home, Library, Search/Filters, Book Details, and Reviews screens.
+- [x] Wire the Library category/age filters and Search query/suggestion chips to the local sample catalogue, including empty results.
 - [ ] Add book detail states for unavailable, free, Premium, PDF in-app, and physical editions.
-- [ ] Finish the page-turn and continuous-scroll reader controls.
+- [x] Finish the page-turn and continuous-scroll sample reader controls; actual PDF/ebook rendering remains in Phase 5.
 - [x] Add the Reader **Listen** action and reusable gentle Premium upsell dialog (prototype interaction; subscription is not connected).
-- [ ] Finish Read Along controls: word highlight, play/pause, seek, voice, speed, and Autoplay pages.
-- [ ] Add automatic resume, manual bookmarks, and per-child progress UI.
+- [x] Implement sample Read Along controls: Android TTS, word highlighting (engine word timing with estimated fallback), play/pause, seek, voice, speed, audio focus, and Autoplay pages. Production narration/content timing remains in Phase 5.
+- [x] Persist reader position and manual bookmarks and resume the selected book in the local preview.
+- [ ] Associate progress with real child profiles and show per-child progress UI.
 - [ ] Finish Offline Books list, storage status, remove-book flow, and sync status.
 
 ### Community and family account
@@ -77,8 +84,8 @@ Resolve these decisions before connecting payments, publishing content, or colle
 ## Phase 3 — Firebase and trusted backend
 
 - [ ] Create separate Firebase projects/configuration for development, staging, and production.
-- [ ] Define Firestore collections and versioned data contracts for accounts, profiles, books, access, progress, orders, reviews, and community.
-- [ ] Define Cloud Storage paths and upload limits for books, covers, narration, and community images.
+- [x] Define Firestore collections and versioned data contracts for accounts, profiles, books, access, progress, orders, reviews, and community as a reviewable v1 draft (`firebase/contracts/v1.json`).
+- [x] Define proposed Cloud Storage paths and upload limits for books, covers, narration, and community images (`firebase/SCHEMA.md`); production approval remains pending.
 - [ ] Implement Firebase Authentication account linking for Google, email, and phone methods.
 - [ ] Implement backend functions for book access, subscription entitlements, order creation, payment verification, and moderation actions.
 - [ ] Add role-based admin access, Firebase App Check, restrictive Firestore/Storage rules, and audit records.
@@ -147,10 +154,10 @@ Resolve these decisions before connecting payments, publishing content, or colle
 Keep this section current as work proceeds:
 
 - **Current phase:** Phase 1/2 — Prototype flow completion and foundation
-- **Next task:** Finish the local prototype states, then connect approved backend services.
-- **Blockers:** Firebase project IDs and app registrations; content catalogue and distribution rights; offline eligibility/expiry policy; free/Premium entitlements; privacy/parent-consent/data-retention approval; physical fulfillment terms; approved moderation rules; applicable digital billing flow. These need owner or external-service input and remain unchecked.
-- **Completed in this pass:** reader page buttons and in-session bookmark toggle; read-along play/pause, seek, speed selection, autoplay toggle, and settings dialog; subscription/checkout no longer fake successful purchases; initial architecture boundaries; Firebase schema draft and deny-all client rules; successful debug APK build.
-- **Important limit:** reader position/bookmark and read-along controls are still prototype-only in-memory state. No narration audio, word timing, durable offline storage, auth, payment, or Firebase service is connected.
+- **Next task:** Finish Android-local screen, accessibility, and localization work; then connect approved backend services.
+- **Blockers:** Firebase project IDs and app registrations; content catalogue and distribution rights; offline eligibility/expiry policy; free/Premium entitlements; privacy/parent-consent/data-retention approval; physical fulfillment terms; approved moderation rules; applicable digital billing flow. Device review is also pending because this environment has no `adb` or connected emulator. These items remain unchecked.
+- **Completed in this pass:** extracted shared UI primitives and empty states; added persistent local reader position/bookmarks and Home resume progress; added distinct page-turn and continuous-scroll sample layouts; functional local Library/Search filters; working local book-save and feed-like controls; sign-in input validation without fake authentication; local child-profile and community/review previews with image selection; delivery validation, bKash/Visa selection, and support-form shortcuts; added Android English/Bangla app-locale support and translated fixed app UI copy; added scalable line heights, reduced-motion handling, accessible touch sizing, and stronger muted-text contrast; removed fabricated purchases/orders/offline books; added versioned Firestore contract and proposed Storage paths/limits; implemented device TTS narration, word highlighting, pause/resume, seek, voice/rate controls, audio focus, autoplay, and a one-page sample route; built `LittlePageApp_1.23.apk` successfully.
+- **Important limit:** local reading data uses a placeholder profile ID and has no cloud sync. Read-along currently speaks sample text using an installed English Android TTS voice; exact word timing depends on the engine and falls back to estimated word highlighting. No licensed book text/audio/timing is connected. Community images are not uploaded. Authentication, payment, real book content, offline content storage, and Firebase services are not connected.
 - **Decision log (2026-10-11):** English and Bangla are launch languages. PDFs are in-app only for every customer, including Premium. Premium narration/word highlighting is a subscription feature. When a physical edition is available, offer both in-app PDF access and the printed book. Requested Bangladesh payment methods are bKash and Visa. Offline access is required; entitlement, expiry, and storage policy remain open.
 
 ### Task update convention
@@ -162,10 +169,16 @@ Keep this section current as work proceeds:
 ## Project structure today
 
 - `app/src/main/java/com/littlepages/app/MainActivity.kt`: Android entry point
+- `app/src/main/java/com/littlepages/app/AppLanguage.kt`: Android app-locale selection and pre-Android 13 configuration wrapper
+- `app/src/main/res/values-bn/strings.xml`: initial Bangla shell/account translations
 - `app/src/main/java/com/littlepages/app/ui/theme/Theme.kt`: shared color palette and Compose theme
 - `app/src/main/java/com/littlepages/app/ui/LittlePagesApp.kt`: current app shell, route state, UI prototype screens, and reusable components
+- `app/src/main/java/com/littlepages/app/ui/AppText.kt`: fixed app copy translations for Bangla
+- `app/src/main/java/com/littlepages/app/ui/components/SharedComponents.kt`: shared Compose layout and design primitives
+- `app/src/main/java/com/littlepages/app/data/ReaderProgressStore.kt`: app-private local reading position and bookmark cache
 - `ARCHITECTURE.md`: initial boundaries and platform expansion decisions
 - `firebase/SCHEMA.md`: proposed shared backend data contract; no Firebase project is connected
+- `firebase/contracts/v1.json`: machine-readable version 1 Firestore document schemas
 - `firebase/firestore.rules`, `firebase/storage.rules`: deny-all starter rules until reviewed production rules exist
 
 As feature implementation grows, split the prototype into feature packages and extract independent Gradle modules when that separation reduces coupling or makes parallel development easier.

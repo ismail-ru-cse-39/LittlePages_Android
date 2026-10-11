@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://littlepages.example/contracts/firestore/v1.json",
+  "title": "LittlePages Firestore document contracts",
+  "description": "Proposed version 1 document shapes. Server authorization and product approval are separate requirements.",
+  "$defs": {
+    "Versioned": {
+      "type": "object",
+      "required": ["schemaVersion"],
+      "properties": { "schemaVersion": { "const": 1 } }
+    },
+    "LocalizedText": {
+      "type": "object",
+      "properties": { "en": { "type": "string" }, "bn": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "Account": {
+      "allOf": [
+        { "$ref": "#/$defs/Versioned" },
+        { "type": "object", "required": ["uid", "state", "createdAt", "updatedAt"], "properties": {
+          "uid": { "type": "string", "minLength": 1 }, "state": { "enum": ["active", "deletion_pending", "deleted", "suspended"] },
+          "displayName": { "type": "string", "maxLength": 100 }, "locale": { "enum": ["en", "bn"] },
+          "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }
+        } }
+      ]
+    },
+    "ChildProfile": {
+      "allOf": [
+        { "$ref": "#/$defs/Versioned" },
+        { "type": "object", "required": ["childId", "nickname", "ageBand", "createdAt", "updatedAt"], "properties": {
+          "childId": { "type": "string", "minLength": 1 }, "nickname": { "type": "string", "minLength": 1, "maxLength": 30 },
+          "ageBand": { "enum": ["0-2", "3-5", "6-8", "9-12"] }, "preferredLocales": { "type": "array", "items": { "enum": ["en", "bn"] }, "uniqueItems": true },
+          "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }
+        } }
+      ]
+    },
+    "Book": {
+      "allOf": [
+        { "$ref": "#/$defs/Versioned" },
+        { "type": "object", "required": ["bookId", "publicationState", "title", "contentVersion", "pageCount", "locales"], "properties": {
+          "bookId": { "type": "string", "minLength": 1 }, "publicationState": { "enum": ["draft", "published", "archived"] },
+          "title": { "$ref": "#/$defs/LocalizedText" }, "description": { "$ref": "#/$defs/LocalizedText" },
+          "contentVersion": { "type": "integer", "minimum": 1 }, "pageCount": { "type": "integer", "minimum": 1 },
+          "locales": { "type": "array", "items": { "enum": ["en", "bn"] }, "minItems": 1, "uniqueItems": true },
+          "ageBand": { "enum": ["0-2", "3-5", "6-8", "9-12"] }, "free": { "type": "boolean" },
+          "premium": { "type": "boolean" }, "pdfInAppEnabled": { "type": "boolean" },
+          "physicalEdition": { "type": "object", "properties": { "available": { "type": "boolean" }, "stock": { "type": "integer", "minimum": 0 }, "currency": { "const": "BDT" }, "priceMinor": { "type": "integer", "minimum": 0 } }, "additionalProperties": false }
+        } }
+      ]
+    },
+    "BookAccess": {
+      "allOf": [
+        { "$ref": "#/$defs/Versioned" },
+        { "type": "object", "required": ["uid", "childId", "bookId", "state", "contentVersion", "validUntil"], "properties": {
+          "uid": { "type": "string" }, "childId": { "type": "string" }, "bookId": { "type": "string" },
+          "state": { "enum": ["active", "expired", "revoked"] }, "contentVersion": { "type": "integer", "minimum": 1 },
+          "validUntil": { "type": "string", "format": "date-time" }, "source": { "enum": ["free", "book_purchase", "subscription", "admin_grant"] }
+        } }
+      ]
+    },
+    "ReadingProgress": {
+      "allOf": [
+        { "$ref": "#/$defs/Versioned" },
+        { "type": "object", "required": ["uid", "childId", "bookId", "page", "contentVersion", "updatedAt"], "properties": {
+          "uid": { "type": "string" }, "childId": { "type": "string" }, "bookId": { "type": "string" },
+          "page": { "type": "integer", "minimum": 1 }, "contentVersion": { "type": "integer", "minimum": 1 },
+          "updatedAt": { "type": "string", "format": "date-time" }, "deviceRevision": { "type": "integer", "minimum": 0 }
+        } }
+      ]
+    },
+    "Order": {
+      "allOf": [
+        { "$ref": "#/$defs/Versioned" },
+        { "type": "object", "required": ["orderId", "uid", "state", "currency", "totalMinor", "createdAt"], "properties": {
+          "orderId": { "type": "string" }, "uid": { "type": "string" }, "state": { "enum": ["pending", "paid", "fulfilling", "shipped", "complete", "failed", "cancelled", "refunded"] },
+          "currency": { "const": "BDT" }, "totalMinor": { "type": "integer", "minimum": 0 },
+          "itemIds": { "type": "array", "items": { "type": "string" } }, "paymentProvider": { "enum": ["bkash", "visa", "google_play"] },
+          "providerReference": { "type": "string" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }
+        } }
+      ]
+    },
+    "Review": {
+      "allOf": [
+        { "$ref": "#/$defs/Versioned" },
+        { "type": "object", "required": ["reviewId", "uid", "bookId", "rating", "body", "moderationState", "createdAt"], "properties": {
+          "reviewId": { "type": "string" }, "uid": { "type": "string" }, "bookId": { "type": "string" },
+          "rating": { "type": "integer", "minimum": 1, "maximum": 5 }, "body": { "type": "string", "maxLength": 2000 },
+          "moderationState": { "enum": ["pending", "visible", "hidden", "removed"] }, "createdAt": { "type": "string", "format": "date-time" }
+        } }
+      ]
+    },
+    "CommunityPost": {
+      "allOf": [
+        { "$ref": "#/$defs/Versioned" },
+        { "type": "object", "required": ["postId", "uid", "body", "moderationState", "createdAt"], "properties": {
+          "postId": { "type": "string" }, "uid": { "type": "string" }, "groupId": { "type": "string" },
+          "body": { "type": "string", "maxLength": 5000 }, "imageAssetIds": { "type": "array", "items": { "type": "string" }, "maxItems": 4 },
+          "moderationState": { "enum": ["pending", "visible", "hidden", "removed"] }, "createdAt": { "type": "string", "format": "date-time" }
+        } }
+      ]
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # LittlePages Firebase data contract draft
 
-This is a backend-neutral starting contract for development and review. No Firebase project is connected and the default rules deny every client request. Never loosen the rules to make a prototype screen work.
+This is a backend-neutral starting contract for development and review. Machine-readable document shapes are in `contracts/v1.json`. No Firebase project is connected and the default rules deny every client request. Never loosen the rules to make a prototype screen work.
 
 ## Identity and family
 
@@ -36,3 +36,15 @@ This is a backend-neutral starting contract for development and review. No Fireb
 4. Keep original books and narration out of public buckets. Enforce upload size/type limits and image safety review before community publication.
 5. Make payment webhooks idempotent and grant/revoke access only from verified provider state.
 6. Add retention/deletion handling after product, privacy, and legal owners approve the policy.
+
+## Proposed Storage object paths and limits
+
+These are implementation defaults for review, not production authorization:
+
+- `books/{bookId}/v{contentVersion}/{locale}/reader.pdf`: max 100 MiB, `application/pdf` only.
+- `books/{bookId}/v{contentVersion}/{locale}/cover.webp`: max 10 MiB, JPEG/PNG/WebP accepted on upload and normalized to WebP.
+- `books/{bookId}/v{contentVersion}/{locale}/narration/{trackId}.mp3`: max 100 MiB per track.
+- `books/{bookId}/v{contentVersion}/{locale}/timings/{trackId}.json`: max 5 MiB; validate word offsets against the narration and script before publish.
+- `community/{uid}/{assetId}`: max 5 MiB per image, JPEG/PNG/WebP only, maximum four images per post, pending moderation before parent-feed visibility.
+
+Reader assets are private. Admin uploads and parent image uploads must go through authenticated, size/type-limited flows; storage rules remain deny-all until the owner approves roles, moderation, retention, and access expiry.

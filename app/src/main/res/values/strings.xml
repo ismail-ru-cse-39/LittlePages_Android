@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">LittlePages</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_library">Library</string>
+    <string name="nav_community">Community</string>
+    <string name="nav_profile">Profile</string>
+    <string name="language_english">English</string>
+    <string name="language_bangla">বাংলা</string>
+    <string name="parent_account">Parent account</string>
+    <string name="family_section">Family</string>
+    <string name="account_section">Your account</string>
+    <string name="child_profiles">Child profiles</string>
+    <string name="premium_title">LittlePages Premium</string>
+    <string name="language_label">Language</string>
+    <string name="offline_books">Offline books</string>
+    <string name="orders_label">Orders</string>
+    <string name="support_label">Help and support</string>
+    <string name="browse_books">Browse books</string>
+    <string name="no_offline_books">No offline books yet</string>
+</resources>
