@@ -31,6 +31,8 @@ Start as packages in the app module. Extract Gradle modules only when build owne
 
 Do not commit service account keys, payment secrets, or production Firebase configuration. Add environment-specific Firebase app configuration only after the owner provides project IDs and app registrations. Secret values belong in CI/provider secret stores; client apps may contain public Firebase app identifiers, never server credentials.
 
+The environment boundaries and required registrations are listed in `firebase/ENVIRONMENTS.md`. Trusted operation requirements, the fail-closed rules review, and the operations/monitoring plan are in `firebase/BACKEND_OPERATIONS.md`, `firebase/SECURITY_REVIEW.md`, and `firebase/OPERATIONS.md`. These are implementation contracts and review notes; they do not indicate that Firebase is connected.
+
 ### Admin-managed product settings
 
 - Treat the publishing service and versioned content model as the single source of truth for Android, iOS, and the website. Admins publish once; the clients implement the same contracts and render with native components. Follow `firebase/PUBLISHING.md` for the manifest, pinned revisions, drafts, validation, rollback, and client refresh contract.
@@ -43,4 +45,5 @@ Do not commit service account keys, payment secrets, or production Firebase conf
 - Remote configuration cannot replace authorization. Server functions enforce content access, billing, stock, privacy requests, and moderation. The console cannot enable a capability that has no implemented payment provider or app/backend behavior.
 - Keep the configuration contract versioned and backward-compatible across Android, iOS, web, and staff admin. Unknown page blocks or schema versions must fail safely to a supported fallback and be observable; never make an unknown block crash the storefront.
 - `admin/` is currently a static interaction prototype that reads the shared provisional JSON and saves browser-local drafts. It is not an authenticated staff tool and has no authority to publish or modify Firebase.
+- The team/roles panel in `admin/` is a local role-matrix preview only. Role changes are not authorization and must be replaced by server-checked staff identity/permissions before deployment.
 - All values are provisional until product/privacy/content owners approve them. Child privacy, store policy, law, and verified transaction state cannot be overridden by a client-side setting.

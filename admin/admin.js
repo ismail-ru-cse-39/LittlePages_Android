@@ -1,11 +1,22 @@
 const STORAGE_KEY = 'littlepages-admin-preview-draft-v1';
+const STAFF_STORAGE_KEY = 'littlepages-admin-staff-role-preview-v1';
 const fallback = {
   schemaVersion: 1,
   revision: 1,
   catalog: {
     productTypes: [
-      { id: 'book', label: { en: 'Books', bn: 'বই' }, renderer: 'book_v1', enabled: true },
-      { id: 'toy', label: { en: 'Toys', bn: 'খেলনা' }, renderer: 'physical_good_v1', enabled: true }
+      { id: 'book', label: { en: 'Books', bn: 'বই' }, renderer: 'book_v1', enabled: true, attributes: [
+        { id: 'author', label: { en: 'Author', bn: 'লেখক' }, valueType: 'text', required: true },
+        { id: 'age_band', label: { en: 'Recommended age', bn: 'প্রস্তাবিত বয়স' }, valueType: 'text', required: true },
+        { id: 'page_count', label: { en: 'Page count', bn: 'পৃষ্ঠা সংখ্যা' }, valueType: 'number', required: false }
+      ] },
+      { id: 'toy', label: { en: 'Toys', bn: 'খেলনা' }, renderer: 'physical_good_v1', enabled: true, attributes: [
+        { id: 'age_band', label: { en: 'Recommended age', bn: 'প্রস্তাবিত বয়স' }, valueType: 'text', required: true },
+        { id: 'material', label: { en: 'Material', bn: 'উপাদান' }, valueType: 'enum', required: false, options: [
+          { value: 'wood', label: { en: 'Wood', bn: 'কাঠ' } }, { value: 'paper', label: { en: 'Paper', bn: 'কাগজ' } },
+          { value: 'fabric', label: { en: 'Fabric', bn: 'কাপড়' } }, { value: 'plastic', label: { en: 'Plastic', bn: 'প্লাস্টিক' } }
+        ] }
+      ] }
     ],
     storefronts: [
       { id: 'books', slug: 'books', title: { en: 'Books', bn: 'বই' }, productTypeIds: ['book'], categoryIds: ['animals', 'friendship', 'nature', 'bedtime', 'courage'], landingPageId: 'books-home', enabled: true, navigationVisible: true, sortOrder: 10, regions: ['BD'] },
@@ -22,12 +33,15 @@ const fallback = {
 };
 
 let config;
+let products = [];
+let staffRoleDraft = [];
 let selectedPageId = '';
 let eventsBound = false;
 const byId = id => document.getElementById(id);
 const clone = value => JSON.parse(JSON.stringify(value));
 const newId = prefix => `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
 const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value ?? ''; if (className) node.className = className; return node; };
+const node = text;
 
 async function loadConfig() {
   try {
@@ -37,15 +51,28 @@ async function loadConfig() {
   } catch {
     config = clone(fallback);
   }
+  try {
+    const productsResponse = await fetch('../firebase/config/demo-products.v1.json');
+    products = productsResponse.ok ? await productsResponse.json() : [];
+  } catch { products = []; }
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) {
-    try { config = JSON.parse(saved); } catch { localStorage.removeItem(STORAGE_KEY); }
+    try {
+      const draft = JSON.parse(saved);
+      if (draft.configuration) { config = draft.configuration; products = draft.products ?? products; }
+      else { config = draft; }
+    } catch { localStorage.removeItem(STORAGE_KEY); }
   }
   config.catalog.productTypes ??= clone(fallback.catalog.productTypes);
+  config.catalog.productTypes = config.catalog.productTypes.map(type => {
+    const defaults = fallback.catalog.productTypes.find(item => item.id === type.id);
+    return { ...type, attributes: type.attributes?.length ? type.attributes : clone(defaults?.attributes ?? []) };
+  });
   config.catalog.storefronts ??= clone(fallback.catalog.storefronts);
   config.catalog.productCategories ??= clone(fallback.catalog.productCategories);
   config.catalog.storePages ??= clone(fallback.catalog.storePages);
   selectedPageId = config.catalog.storePages[0]?.id ?? '';
+  try { staffRoleDraft = JSON.parse(localStorage.getItem(STAFF_STORAGE_KEY) || '[]'); } catch { staffRoleDraft = []; }
   bindEvents();
   render();
 }
@@ -61,10 +88,22 @@ function bindEvents() {
     const titleEn = data.get('titleEn').trim();
     const titleBn = data.get('titleBn').trim();
     const typeId = data.get('typeId');
-    const id = slug(titleEn);
+    const id = slug(titleEn) || newId('store');
     if (!titleEn || !titleBn || config.catalog.storefronts.some(store => store.id === id)) return;
     config.catalog.storefronts.push({ id, slug: id, title: { en: titleEn, bn: titleBn }, productTypeIds: [typeId], categoryIds: [], landingPageId: null, navigationVisible: true, enabled: true, sortOrder: (config.catalog.storefronts.length + 1) * 10, regions: ['BD'] });
     event.currentTarget.reset(); event.currentTarget.hidden = true; render();
+  });
+  byId('addProductButton').addEventListener('click', () => openProductForm());
+  byId('cancelProductButton').addEventListener('click', () => { byId('productForm').reset(); byId('productForm').hidden = true; });
+  byId('productForm').addEventListener('submit', saveProduct);
+  byId('productForm').elements.typeId.addEventListener('change', () => renderAttributeFields());
+  byId('staffRoleForm').addEventListener('submit', event => {
+    event.preventDefault();
+    const form = event.currentTarget; const email = String(new FormData(form).get('email') || '').trim().toLowerCase();
+    const role = String(new FormData(form).get('role') || 'catalog_editor');
+    if (!email || staffRoleDraft.some(member => member.email === email)) return;
+    staffRoleDraft.push({ id: newId('staff-preview'), email, role });
+    localStorage.setItem(STAFF_STORAGE_KEY, JSON.stringify(staffRoleDraft)); form.reset(); renderStaffRoles();
   });
   byId('categoryForm').addEventListener('submit', event => {
     event.preventDefault();
@@ -72,7 +111,7 @@ function bindEvents() {
     const storeId = data.get('storeId');
     const labelEn = data.get('labelEn').trim();
     const labelBn = data.get('labelBn').trim();
-    const id = slug(`${storeId}-${labelEn}`);
+    const id = slug(`${storeId}-${labelEn}`) || newId('category');
     if (!storeId || !labelEn || !labelBn || config.catalog.productCategories.some(category => category.id === id)) return;
     const store = config.catalog.storefronts.find(item => item.id === storeId);
     config.catalog.productCategories.push({ id, storefrontId: storeId, label: { en: labelEn, bn: labelBn }, enabled: true, sortOrder: config.catalog.productCategories.length * 10 + 10 });
@@ -89,13 +128,13 @@ function bindEvents() {
   byId('addBlockButton').addEventListener('click', addBlock);
   byId('publishButton').addEventListener('click', () => { renderValidation(); byId('publishDialog').showModal(); });
   byId('closeDialogButton').addEventListener('click', () => byId('publishDialog').close());
-  byId('saveDraftButton').addEventListener('click', () => { localStorage.setItem(STORAGE_KEY, JSON.stringify(config)); byId('publishDialog').close(); render(); });
+  byId('saveDraftButton').addEventListener('click', () => { localStorage.setItem(STORAGE_KEY, JSON.stringify({ configuration: config, products })); byId('publishDialog').close(); render(); });
   byId('exportDraftButton').addEventListener('click', exportDraft);
-  byId('resetButton').addEventListener('click', async () => { localStorage.removeItem(STORAGE_KEY); await loadConfig(); });
+  byId('resetButton').addEventListener('click', async () => { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(STAFF_STORAGE_KEY); staffRoleDraft = []; await loadConfig(); });
 }
 
 function render() {
-  renderSummary(); renderStores(); renderCategories(); renderPages(); renderProductTypes();
+  renderSummary(); renderStores(); renderCategories(); renderPages(); renderProductTypes(); renderPolicies(); renderProducts(); renderStaffRoles();
   byId('revisionValue').textContent = `Draft ${config.revision ?? 1}`;
 }
 
@@ -132,7 +171,10 @@ function renderCategories() {
     const labels = text('div', category.label.en); labels.append(text('small', `${category.label.bn} · ${storeTitle(category.storefrontId)}`)); row.append(labels);
     const remove = text('button', 'Remove', 'remove-button'); remove.type = 'button'; remove.addEventListener('click', () => {
       config.catalog.productCategories = config.catalog.productCategories.filter(item => item.id !== category.id);
-      config.catalog.storefronts.forEach(store => { store.categoryIds = store.categoryIds.filter(id => id !== category.id); }); render();
+      config.catalog.storefronts.forEach(store => { store.categoryIds = store.categoryIds.filter(id => id !== category.id); });
+      products.forEach(product => { product.categoryIds = product.categoryIds.filter(id => id !== category.id); });
+      config.catalog.storePages.forEach(page => page.blocks.forEach(block => { block.categoryIds = (block.categoryIds ?? []).filter(id => id !== category.id); if (block.query?.categoryIds) block.query.categoryIds = block.query.categoryIds.filter(id => id !== category.id); }));
+      render();
     }); row.append(remove); list.append(row);
   });
   const submit = byId('categoryForm').querySelector('button[type="submit"]'); submit.disabled = config.catalog.storefronts.length === 0;
@@ -170,6 +212,231 @@ function renderProductTypes() {
     const card = document.createElement('div'); card.className = 'type-card'; card.append(text('span', type.renderer === 'book_v1' ? '▤' : '◇', 'store-icon'));
     const details = text('div', type.label.en); details.className = 'store-name'; details.append(text('small', `${type.renderer} · supported template`)); card.append(details); list.append(card);
   });
+  const storeType = byId('storeForm').elements.typeId;
+  const productType = byId('productForm').elements.typeId;
+  const previousStoreType = storeType.value;
+  const previousProductType = productType.value;
+  [storeType, productType].forEach(select => {
+    select.replaceChildren();
+    config.catalog.productTypes.filter(type => type.enabled).forEach(type => { const option = document.createElement('option'); option.value = type.id; option.textContent = type.label.en; select.append(option); });
+  });
+  if ([...storeType.options].some(option => option.value === previousStoreType)) storeType.value = previousStoreType;
+  if ([...productType.options].some(option => option.value === previousProductType)) productType.value = previousProductType;
+  const categorySelect = byId('productForm').elements.categoryId;
+  const previousCategory = categorySelect.value;
+  categorySelect.replaceChildren();
+  const noCategory = document.createElement('option'); noCategory.value = ''; noCategory.textContent = 'No category'; categorySelect.append(noCategory);
+  config.catalog.productCategories.filter(category => category.enabled).forEach(category => { const option = document.createElement('option'); option.value = category.id; option.textContent = `${category.label.en} · ${storeTitle(category.storefrontId)}`; categorySelect.append(option); });
+  if ([...categorySelect.options].some(option => option.value === previousCategory)) categorySelect.value = previousCategory;
+}
+
+function renderProducts() {
+  const list = byId('productList'); list.replaceChildren();
+  products.forEach(product => {
+    const row = document.createElement('div'); row.className = 'product-admin-row';
+    row.append(text('span', product.typeId === 'book' ? '▤' : '◇', 'store-icon'));
+    const title = text('div', product.title.en, 'store-name'); title.append(text('small', `${typeName(product.typeId)} · ${product.categoryIds.map(categoryId => config.catalog.productCategories.find(category => category.id === categoryId)?.label.en ?? categoryId).join(', ') || 'Uncategorized'}`)); row.append(title);
+    row.append(text('span', product.status, `product-state ${product.status}`));
+    const actions = document.createElement('div'); actions.className = 'product-row-actions';
+    const edit = text('button', 'Edit'); edit.type = 'button'; edit.addEventListener('click', () => openProductForm(product)); actions.append(edit);
+    if (product.status !== 'archived') { const archive = text('button', 'Archive'); archive.type = 'button'; archive.addEventListener('click', () => { product.status = 'archived'; render(); }); actions.append(archive); }
+    row.append(actions); list.append(row);
+  });
+  if (!products.length) list.append(text('div', 'No local sample products yet.', 'empty-state'));
+}
+
+function renderStaffRoles() {
+  const list = byId('staffRoleList'); list.replaceChildren();
+  if (!staffRoleDraft.length) { list.append(text('div', 'No local preview role assignments yet. Add a sample row to inspect the role table.', 'empty-state')); return; }
+  staffRoleDraft.forEach(member => {
+    const row = document.createElement('div'); row.className = 'staff-role-row';
+    const email = text('div', member.email, 'store-name'); email.append(text('small', 'Local sample only')); row.append(email);
+    const role = document.createElement('select'); role.setAttribute('aria-label', `Preview role for ${member.email}`);
+    [['catalog_editor', 'Catalog editor'], ['publisher', 'Publisher'], ['moderator', 'Moderator'], ['administrator', 'Administrator']].forEach(([value, label]) => { const option = document.createElement('option'); option.value = value; option.textContent = label; role.append(option); });
+    role.value = member.role; role.addEventListener('change', () => { member.role = role.value; localStorage.setItem(STAFF_STORAGE_KEY, JSON.stringify(staffRoleDraft)); }); row.append(role);
+    const remove = text('button', 'Remove preview row', 'remove-button'); remove.type = 'button'; remove.addEventListener('click', () => { staffRoleDraft = staffRoleDraft.filter(item => item.id !== member.id); localStorage.setItem(STAFF_STORAGE_KEY, JSON.stringify(staffRoleDraft)); renderStaffRoles(); }); row.append(remove);
+    list.append(row);
+  });
+}
+
+function openProductForm(product = null) {
+  const form = byId('productForm'); renderProductTypes(); form.reset();
+  form.elements.productId.value = product?.id ?? '';
+  form.elements.titleEn.value = product?.title.en ?? '';
+  form.elements.titleBn.value = product?.title.bn ?? '';
+  form.elements.descriptionEn.value = product?.description?.en ?? '';
+  form.elements.descriptionBn.value = product?.description?.bn ?? '';
+  form.elements.typeId.value = product?.typeId ?? config.catalog.productTypes.find(type => type.enabled)?.id ?? '';
+  form.elements.categoryId.value = product?.categoryIds?.[0] ?? '';
+  form.elements.price.value = ((product?.variants?.[0]?.priceMinor ?? 0) / 100).toFixed(2);
+  form.elements.stockState.value = product?.variants?.[0]?.stockState ?? 'not_applicable';
+  form.elements.stockQuantity.value = product?.variants?.[0]?.stockQuantity ?? '';
+  renderAttributeFields(product?.attributes ?? {});
+  form.elements.status.value = product?.status ?? 'draft';
+  form.querySelector('button[type="submit"]').textContent = product ? 'Update product' : 'Save product';
+  form.hidden = false;
+  form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  form.elements.titleEn.focus();
+}
+
+function saveProduct(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const productId = String(data.get('productId') || '');
+  const typeId = String(data.get('typeId') || '');
+  const type = config.catalog.productTypes.find(item => item.id === typeId && item.enabled);
+  const titleEn = String(data.get('titleEn') || '').trim();
+  const titleBn = String(data.get('titleBn') || '').trim();
+  const price = Number(data.get('price'));
+  if (!type || !titleEn || !titleBn || !Number.isFinite(price) || price < 0) return;
+  const existing = products.find(item => item.id === productId);
+  const id = productId || slug(titleEn) || newId('product');
+  if (!productId && products.some(item => item.id === id)) return;
+  const categoryId = String(data.get('categoryId') || '');
+  const category = config.catalog.productCategories.find(item => item.id === categoryId && item.enabled);
+  if (categoryId && !category) return;
+  const stockState = String(data.get('stockState'));
+  const quantityValue = String(data.get('stockQuantity') || '').trim();
+  const quantity = quantityValue ? Math.max(0, Number.parseInt(quantityValue, 10)) : null;
+  const attributes = {};
+  for (const definition of type.attributes ?? []) {
+    const raw = data.get(`attribute:${definition.id}`);
+    if (definition.valueType === 'boolean') {
+      attributes[definition.id] = form.elements.namedItem(`attribute:${definition.id}`).checked;
+    } else if (definition.valueType === 'number') {
+      if (raw !== null && String(raw).trim() !== '') attributes[definition.id] = Number(raw);
+    } else if (definition.valueType === 'text_list') {
+      const values = String(raw ?? '').split(',').map(item => item.trim()).filter(Boolean);
+      if (values.length) attributes[definition.id] = values;
+    } else {
+      const value = String(raw ?? '').trim();
+      if (value) attributes[definition.id] = value;
+    }
+  }
+  const oldVariant = existing?.variants?.[0];
+  const product = {
+    ...(existing ?? {}), id, typeId, status: String(data.get('status')),
+    title: { en: titleEn, bn: titleBn },
+    description: { en: String(data.get('descriptionEn') || '').trim(), bn: String(data.get('descriptionBn') || '').trim() },
+    categoryIds: category ? [category.id] : [], imageAssetIds: existing?.imageAssetIds ?? [], attributes,
+    variants: [{
+      id: oldVariant?.id ?? `${id}-standard`,
+      label: oldVariant?.label ?? { en: typeId === 'book' ? 'Read in app' : 'Standard', bn: typeId === 'book' ? 'অ্যাপে পড়ুন' : 'সাধারণ' },
+      priceMinor: Math.round(price * 100), currency: 'BDT', stockState,
+      stockQuantity: stockState === 'in_stock' ? quantity ?? 0 : stockState === 'not_applicable' ? null : quantity
+    }]
+  };
+  if (existing) products[products.indexOf(existing)] = product; else products.unshift(product);
+  form.reset(); form.hidden = true; render();
+}
+
+function renderAttributeFields(values = {}) {
+  const root = byId('attributeFields'); root.replaceChildren();
+  const type = config.catalog.productTypes.find(item => item.id === byId('productForm').elements.typeId.value);
+  (type?.attributes ?? []).forEach(definition => {
+    const label = document.createElement('label');
+    label.append(document.createTextNode(`${definition.label.en} · ${definition.label.bn}`));
+    const input = definition.valueType === 'enum' ? document.createElement('select') : document.createElement('input');
+    input.name = `attribute:${definition.id}`;
+    input.required = Boolean(definition.required);
+    if (definition.valueType === 'boolean') input.type = 'checkbox';
+    else if (definition.valueType === 'number') { input.type = 'number'; input.min = '0'; input.step = '1'; }
+    else if (definition.valueType === 'text_list') { input.type = 'text'; input.placeholder = 'Separate values with commas'; }
+    else input.type = 'text';
+    if (definition.valueType === 'enum') {
+      const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'Choose…'; input.append(empty);
+      (definition.options ?? []).forEach(optionDefinition => { const option = document.createElement('option'); option.value = optionDefinition.value; option.textContent = `${optionDefinition.label.en} · ${optionDefinition.label.bn}`; input.append(option); });
+    }
+    let savedValue = values[definition.id];
+    if (savedValue === undefined && definition.id === 'age_band') savedValue = values.ageBand;
+    if (savedValue === undefined && definition.id === 'page_count') savedValue = values.pageCount;
+    if (definition.valueType === 'boolean') input.checked = Boolean(savedValue);
+    else input.value = Array.isArray(savedValue) ? savedValue.join(', ') : savedValue ?? '';
+    label.append(input); root.append(label);
+  });
+}
+
+function renderPolicies() {
+  const root = byId('policyGroups'); root.replaceChildren();
+  const groups = [
+    { key: 'offlinePolicy', title: 'Offline reading', fields: [
+      { key: 'enabled', label: 'Allow offline reading', kind: 'boolean' },
+      { key: 'maximumBooksPerFamily', label: 'Books per family', kind: 'number', min: 0 },
+      { key: 'accessLeaseDays', label: 'Offline access lease (days)', kind: 'number', min: 1 },
+      { key: 'onlineRefreshAfterDays', label: 'Refresh after (days online)', kind: 'number', min: 1 },
+      { key: 'encryptAppPrivateStorage', label: 'Encrypt private app storage', kind: 'boolean' },
+      { key: 'removeWhenEntitlementExpires', label: 'Remove access after expiry', kind: 'boolean' }
+    ] },
+    { key: 'accessPolicy', title: 'Book and Premium access', fields: [
+      { key: 'freeAccess', label: 'Free book rule', kind: 'select', options: [['book_catalogue_flag', 'Use each book setting'], ['none', 'No free access']] },
+      { key: 'premiumBooksRequireActiveSubscription', label: 'Premium books need active subscription', kind: 'boolean' },
+      { key: 'premiumNarrationRequiresActiveSubscription', label: 'Narration needs active subscription', kind: 'boolean' },
+      { key: 'purchasedBookAccessSurvivesSubscriptionExpiry', label: 'Purchased access survives expiry', kind: 'boolean' }
+    ] },
+    { key: 'privacyPolicy', title: 'Family privacy', fields: [
+      { key: 'parentAccountOwnsChildProfiles', label: 'Parent owns child profiles', kind: 'boolean' },
+      { key: 'collectOnlyNicknameAndAgeBandForChildProfile', label: 'Collect nickname and age band only', kind: 'boolean' },
+      { key: 'personalizedAdvertising', label: 'Allow personalized advertising', kind: 'boolean' },
+      { key: 'parentCanRequestAccountAndChildDataDeletion', label: 'Parent can request data deletion', kind: 'boolean' },
+      { key: 'deletionRetentionDays', label: 'Retention period (days, blank = undecided)', kind: 'nullableNumber', min: 0 }
+    ] },
+    { key: 'physicalCommercePolicy', title: 'Physical commerce', fields: [
+      { key: 'enabled', label: 'Enable physical orders', kind: 'boolean' },
+      { key: 'availableRegions', label: 'Regions (comma separated)', kind: 'regions' },
+      { key: 'paymentMethods', label: 'Payment methods', kind: 'methods' },
+      { key: 'showInAppPdfAndPhysicalOptionsWhenBothAvailable', label: 'Offer both book formats when available', kind: 'boolean' },
+      { key: 'requireConfirmedStockAndDeliveryQuoteBeforeCheckout', label: 'Confirm stock and delivery before checkout', kind: 'boolean' },
+      { key: 'cancellationAndRefundRules', label: 'Cancellation/refund summary', kind: 'nullableText' }
+    ] },
+    { key: 'communityPolicy', title: 'Parent community', fields: [
+      { key: 'parentAccountRequired', label: 'Require parent account', kind: 'boolean' },
+      { key: 'moderateBeforePublicVisibility', label: 'Review posts before public visibility', kind: 'boolean' },
+      { key: 'prohibitChildContactAndLocationDetails', label: 'Block child contact/location details', kind: 'boolean' },
+      { key: 'maximumImageBytes', label: 'Image size limit (MB)', kind: 'megabytes' },
+      { key: 'maximumImagesPerPost', label: 'Images per post', kind: 'number', min: 0 },
+      { key: 'allowUserCreatedGroups', label: 'Allow parent-created groups', kind: 'boolean' },
+      { key: 'reportAndBlockEnabled', label: 'Enable report and block', kind: 'boolean' },
+      { key: 'moderationResponseTargetHours', label: 'Response target (hours, blank = undecided)', kind: 'nullableNumber', min: 0 }
+    ] }
+  ];
+  groups.forEach(group => {
+    const panel = document.createElement('section'); panel.className = 'policy-card';
+    panel.append(node('h3', group.title));
+    group.fields.forEach(field => {
+      const label = node('label', field.label, `policy-field${field.kind === 'boolean' ? ' boolean-field' : ''}`);
+      if (field.kind === 'boolean') {
+        const input = document.createElement('input'); input.type = 'checkbox'; input.checked = Boolean(config[group.key][field.key]);
+        input.addEventListener('change', () => { config[group.key][field.key] = input.checked; }); label.append(input);
+      } else if (field.kind === 'select') {
+        const input = document.createElement('select'); field.options.forEach(([value, title]) => { const option = document.createElement('option'); option.value = value; option.textContent = title; input.append(option); });
+        input.value = config[group.key][field.key]; input.addEventListener('change', () => { config[group.key][field.key] = input.value; }); label.append(input);
+      } else if (field.kind === 'methods') {
+        const wrap = document.createElement('span'); wrap.className = 'method-options';
+        [['bkash', 'bKash'], ['visa', 'Visa']].forEach(([value, title]) => {
+          const optionLabel = node('label', title, 'method-option'); const input = document.createElement('input'); input.type = 'checkbox'; input.checked = config[group.key][field.key].includes(value);
+          input.addEventListener('change', () => { config[group.key][field.key] = [...new Set([...config[group.key][field.key].filter(item => item !== value), ...(input.checked ? [value] : [])])]; }); optionLabel.prepend(input); wrap.append(optionLabel);
+        }); label.append(wrap);
+      } else {
+        const input = field.kind === 'nullableText' ? document.createElement('textarea') : document.createElement('input');
+        input.type = 'text';
+        if (field.kind === 'number' || field.kind === 'nullableNumber' || field.kind === 'megabytes') { input.type = 'number'; input.min = field.min ?? 0; input.step = field.kind === 'megabytes' ? '0.5' : '1'; }
+        if (field.kind === 'regions') input.value = config[group.key][field.key].join(', ');
+        else if (field.kind === 'megabytes') input.value = (config[group.key][field.key] / (1024 * 1024)).toString();
+        else input.value = config[group.key][field.key] ?? '';
+        input.addEventListener('input', () => {
+          const value = input.value.trim();
+          if (field.kind === 'regions') config[group.key][field.key] = value.split(',').map(region => region.trim().toUpperCase()).filter(Boolean);
+          else if (field.kind === 'megabytes') config[group.key][field.key] = Math.max(0, Math.round(Number(value || 0) * 1024 * 1024));
+          else if (field.kind === 'nullableNumber') config[group.key][field.key] = value ? Math.max(Number(field.min ?? 0), Number(value)) : null;
+          else if (field.kind === 'nullableText') config[group.key][field.key] = value || null;
+          else config[group.key][field.key] = Math.max(Number(field.min ?? 0), Number(value || 0));
+        }); label.append(input);
+      }
+      panel.append(label);
+    });
+    root.append(panel);
+  });
 }
 
 function validateDraft() {
@@ -186,8 +453,26 @@ function validateDraft() {
   const stores = config.catalog.storefronts;
   const categories = config.catalog.productCategories;
   const pages = config.catalog.storePages;
-  unique(types, 'Product type'); unique(stores, 'Storefront'); unique(categories, 'Category'); unique(pages, 'Page');
-  types.forEach(type => { if (!validId(type.id)) errors.push(`Invalid product type ID: ${type.id}`); localized(type.label, `Product type ${type.id}`); });
+  const productsById = new Map(products.map(product => [product.id, product]));
+  const community = config.communityPolicy;
+  const offline = config.offlinePolicy;
+  if (offline.allowExport !== false) errors.push('PDF export must remain disabled.');
+  if (config.accessPolicy.grantAccessFromClientSuccessScreen !== false) errors.push('Client success screens cannot grant book access.');
+  if (community.maximumImageBytes < 0 || community.maximumImagesPerPost < 0) errors.push('Community image limits must be zero or greater.');
+  if (config.physicalCommercePolicy.paymentMethods.some(method => !['bkash', 'visa'].includes(method))) errors.push('Only supported Bangladesh payment methods can be selected in this preview.');
+  if (offline.accessLeaseDays < 1 || offline.onlineRefreshAfterDays < 1) errors.push('Offline access periods must be at least one day.');
+  unique(types, 'Product type'); unique(stores, 'Storefront'); unique(categories, 'Category'); unique(pages, 'Page'); unique(products, 'Product');
+  types.forEach(type => {
+    if (!validId(type.id)) errors.push(`Invalid product type ID: ${type.id}`);
+    localized(type.label, `Product type ${type.id}`);
+    unique(type.attributes ?? [], `Attributes on ${type.id}`);
+    (type.attributes ?? []).forEach(definition => {
+      if (!/^[a-z][a-z0-9_]{1,39}$/.test(definition.id ?? '')) errors.push(`${type.id} has an invalid attribute ID.`);
+      if (!['text', 'number', 'boolean', 'enum', 'text_list'].includes(definition.valueType)) errors.push(`${type.id}.${definition.id} has an unsupported field type.`);
+      localized(definition.label, `Attribute ${definition.id}`);
+      if (definition.valueType === 'enum' && (!definition.options?.length || new Set(definition.options.map(option => option.value)).size !== definition.options.length)) errors.push(`${type.id}.${definition.id} needs unique enum options.`);
+    });
+  });
   stores.forEach(store => {
     if (!validId(store.id)) errors.push(`Invalid storefront ID: ${store.id}`);
     localized(store.title, `Storefront ${store.id}`);
@@ -199,6 +484,23 @@ function validateDraft() {
     if (!stores.some(store => store.id === category.storefrontId)) errors.push(`Category ${category.id} references an unknown storefront.`);
     localized(category.label, `Category ${category.id}`);
   });
+  products.forEach(product => {
+    if (!validId(product.id)) errors.push(`Invalid product ID: ${product.id}`);
+    if (!types.some(type => type.id === product.typeId && type.enabled)) errors.push(`${product.title?.en ?? product.id} uses an unsupported product type.`);
+    localized(product.title, `Product ${product.id}`); localized(product.description, `Product ${product.id} description`);
+    product.categoryIds.forEach(id => { if (!categories.some(category => category.id === id)) errors.push(`${product.title.en} references a missing category.`); });
+    const productType = types.find(type => type.id === product.typeId);
+    (productType?.attributes ?? []).forEach(definition => {
+      const value = product.attributes?.[definition.id];
+      if (definition.required && (value === undefined || value === null || value === '' || (typeof value === 'string' && !value.trim()))) errors.push(`${product.title.en} needs ${definition.label.en}.`);
+      if (value !== undefined && definition.valueType === 'number' && (typeof value !== 'number' || !Number.isFinite(value))) errors.push(`${product.title.en} has an invalid ${definition.label.en}.`);
+      if (value !== undefined && definition.valueType === 'boolean' && typeof value !== 'boolean') errors.push(`${product.title.en} has an invalid ${definition.label.en}.`);
+      if (value !== undefined && definition.valueType === 'enum' && !(definition.options ?? []).some(option => option.value === value)) errors.push(`${product.title.en} has an unsupported ${definition.label.en}.`);
+      if (value !== undefined && definition.valueType === 'text_list' && !Array.isArray(value)) errors.push(`${product.title.en} has an invalid ${definition.label.en}.`);
+      if (value !== undefined && ['text', 'enum'].includes(definition.valueType) && typeof value !== 'string') errors.push(`${product.title.en} has an invalid ${definition.label.en}.`);
+    });
+    if (!product.variants.length || product.variants.some(variant => variant.priceMinor < 0 || variant.currency !== 'BDT' || (variant.stockQuantity != null && variant.stockQuantity < 0))) errors.push(`${product.title.en} needs a valid BDT variant and stock value.`);
+  });
   const supportedBlocks = new Set(['hero_v1', 'category_rail_v1', 'product_collection_v1', 'editorial_text_v1']);
   pages.forEach(page => {
     localized(page.title, `Page ${page.id}`);
@@ -209,6 +511,7 @@ function validateDraft() {
       blockCategories.forEach(id => { if (!categories.some(category => category.id === id)) errors.push(`${page.title.en} references a missing category.`); });
       const targetStore = block.query?.storefrontId;
       if (targetStore && !stores.some(store => store.id === targetStore)) errors.push(`${page.title.en} references a missing storefront.`);
+      (block.query?.productIds ?? []).forEach(id => { if (!productsById.has(id)) errors.push(`${page.title.en} references a missing product.`); });
     });
   });
   return [...new Set(errors)];
@@ -225,7 +528,7 @@ function renderValidation() {
 function exportDraft() {
   const errors = validateDraft();
   if (errors.length) { renderValidation(); return; }
-  const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify({ draftSchemaVersion: 1, baseConfigurationRevision: config.revision, configuration: config, products }, null, 2)], { type: 'application/json' });
   const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `littlepages-draft-revision-${config.revision ?? 1}.json`; link.click();
   URL.revokeObjectURL(link.href);
 }

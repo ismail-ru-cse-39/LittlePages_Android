@@ -17,6 +17,7 @@
       <a class="nav-link" href="#pages">▤ <span>Pages</span></a>
       <a class="nav-link" href="#categories">◉ <span>Categories</span></a>
       <a class="nav-link" href="#products">◇ <span>Product types</span></a>
+      <a class="nav-link" href="#staff">♙ <span>Team &amp; roles</span></a>
     </nav>
     <div class="sidebar-bottom"><span class="avatar">LP</span><span>Local preview<small>Draft workspace</small></span></div>
   </aside>
@@ -35,6 +36,10 @@
       <form id="storeForm" class="inline-form" hidden><label>English name<input name="titleEn" required maxlength="60" placeholder="e.g. Toys"></label><label>বাংলা নাম<input name="titleBn" required maxlength="60" placeholder="যেমন খেলনা"></label><label>Product type<select name="typeId"><option value="book">Books</option><option value="toy">Toys</option></select></label><button class="button button-primary" type="submit">Add storefront</button><button id="cancelStoreButton" class="button button-soft" type="button">Cancel</button></form>
     </section>
 
+    <section id="productCatalog" class="panel"><div class="panel-heading"><div><span class="eyebrow">CATALOGUE</span><h2>Products</h2><p>Manage shared listings and localized descriptions.</p></div><button id="addProductButton" class="button button-primary">＋ New product</button></div><div id="productList" class="product-admin-list"></div>
+      <form id="productForm" class="product-form" hidden><input name="productId" type="hidden"><label>English title<input name="titleEn" required maxlength="100"></label><label>বাংলা শিরোনাম<input name="titleBn" required maxlength="100"></label><label>Product type<select name="typeId" required></select></label><label>Category<select name="categoryId"></select></label><div id="attributeFields" class="attribute-fields"></div><label>Price in BDT<input name="price" type="number" min="0" step="0.01" required value="0"></label><label>Availability<select name="stockState"><option value="not_applicable">No stock tracking</option><option value="in_stock">In stock</option><option value="out_of_stock">Out of stock</option><option value="preorder">Preorder</option></select></label><label>Stock quantity<input name="stockQuantity" type="number" min="0" step="1"></label><label>Status<select name="status"><option value="draft">Draft</option><option value="published">Published</option><option value="archived">Archived</option></select></label><label class="description-field">English description<textarea name="descriptionEn" required maxlength="1000"></textarea></label><label class="description-field">বাংলা বিবরণ<textarea name="descriptionBn" required maxlength="1000"></textarea></label><div class="form-actions"><button id="cancelProductButton" class="button button-soft" type="button">Cancel</button><button class="button button-primary" type="submit">Save product</button></div></form>
+    </section>
+
     <div class="two-column">
       <section id="categories" class="panel">
         <div class="panel-heading compact"><div><span class="eyebrow">DISCOVERY</span><h2>Categories</h2><p>Categories are linked to a storefront by stable IDs.</p></div></div>
@@ -51,6 +56,9 @@
     </div>
 
     <section id="products" class="panel product-type-panel"><div class="panel-heading compact"><div><span class="eyebrow">SUPPORTED PRODUCT TYPES</span><h2>Product types</h2><p>Admins can create storefronts from these supported templates. New behavior needs an app/backend update.</p></div></div><div id="productTypeList" class="type-list"></div></section>
+
+    <section id="policies" class="panel"><div class="panel-heading compact"><div><span class="eyebrow">FAMILY AND COMMERCE RULES</span><h2>Policy defaults</h2><p>Edit provisional values for review. Server authorization and owner approval are still required.</p></div></div><div id="policyGroups" class="policy-grid"></div><p class="policy-lock-note">🔒 PDF export stays disabled. Customer-side settings cannot grant book access, confirm payments, or bypass moderation.</p></section>
+    <section id="staff" class="panel"><div class="panel-heading compact"><div><span class="eyebrow">ACCESS CONTROL PREVIEW</span><h2>Team &amp; roles</h2><p>Review the planned role matrix. These sample assignments stay in this browser and do not grant or remove real access.</p></div></div><div class="role-warning" role="note"><strong>Not a security control</strong><span>Staff authentication, invitations, role enforcement, and audit events require the trusted Firebase admin service. No real staff identities are loaded here.</span></div><form id="staffRoleForm" class="staff-role-form"><label>Sample staff email<input name="email" type="email" required maxlength="160" placeholder="name@example.com"></label><label>Preview role<select name="role"><option value="catalog_editor">Catalog editor</option><option value="publisher">Publisher</option><option value="moderator">Moderator</option><option value="administrator">Administrator</option></select></label><button class="button button-primary" type="submit">Add local preview row</button></form><div id="staffRoleList" class="staff-role-list"></div></section>
     <footer>LittlePages Studio <span>·</span> Configuration editor preview</footer>
   </main>
   <dialog id="publishDialog"><div class="dialog-icon">✦</div><h2>Review this draft</h2><p>This local check validates IDs and references for the preview. It cannot validate rights or publish to LittlePages.</p><ul id="validationList" class="validation-list"></ul><div class="dialog-actions"><button id="closeDialogButton" class="button button-soft">Back to editing</button><button id="saveDraftButton" class="button button-soft">Save local draft</button><button id="exportDraftButton" class="button button-primary">Download JSON</button></div></dialog>

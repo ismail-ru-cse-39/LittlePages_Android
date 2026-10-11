@@ -3,3 +3,13 @@
 local.properties
 **/build/
 *.iml
+
+# Firebase project-specific client configuration and private credentials
+app/src/**/google-services.json
+firebase/firebase-adminsdk*.json
+firebase/service-account*.json
+.firebase/
+.runtimeconfig.json
+.env
+.env.*
+!.env.example

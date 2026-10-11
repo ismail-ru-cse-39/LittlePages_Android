@@ -31,8 +31,13 @@
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,39}$" }, "label": { "$ref": "#/$defs/LocalizedLabel" },
         "valueType": { "enum": ["text", "number", "boolean", "enum", "text_list"] }, "required": { "type": "boolean" },
-        "options": { "type": "array", "items": { "$ref": "#/$defs/LocalizedLabel" }, "maxItems": 100 }
+        "options": { "type": "array", "items": { "$ref": "#/$defs/AttributeOption" }, "maxItems": 100 }
       },
+      "additionalProperties": false
+    },
+    "AttributeOption": {
+      "type": "object", "required": ["value", "label"],
+      "properties": { "value": { "type": "string", "pattern": "^[a-z0-9_-]{1,40}$" }, "label": { "$ref": "#/$defs/LocalizedLabel" } },
       "additionalProperties": false
     },
     "ProductType": {

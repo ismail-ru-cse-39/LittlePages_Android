@@ -7,7 +7,53 @@
 .validation-list { display: grid; gap: 7px; padding-left: 20px; color: var(--forest); font-size: 11px; }
 .validation-error { color: #a45138; }
 #exportDraftButton:disabled { cursor: not-allowed; opacity: .45; }
+.policy-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
+.policy-card { display: grid; align-content: start; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 15px; background: #fff; }
+.policy-card h3 { margin: 0 0 2px; color: var(--ink); font-size: 13px; }
+.policy-field { display: grid; gap: 6px; color: #68776e; font-size: 10px; font-weight: 650; }
+.policy-field input:not([type="checkbox"]), .policy-field select, .policy-field textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 9px; background: #fff; color: var(--ink); font: inherit; }
+.policy-field textarea { min-height: 52px; resize: vertical; }
+.policy-field.boolean-field { grid-template-columns: 18px 1fr; align-items: center; }
+.policy-field input[type="checkbox"] { accent-color: var(--forest); }
+.method-options { display: flex; gap: 9px; }
+.method-option { display: flex; align-items: center; gap: 5px; padding: 7px 9px; border-radius: 8px; background: #f4f6f2; }
+.policy-lock-note { color: #78867d; font-size: 10px; line-height: 1.5; margin: 13px 0 0; }
+.role-warning { display: grid; gap: 4px; border: 1px solid #efd6b0; border-radius: 10px; background: #fff8ec; padding: 12px 14px; color: #786240; font-size: 10px; line-height: 1.5; }
+.role-warning strong { color: #72542a; font-size: 11px; }
+.staff-role-form { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(150px, .7fr) auto; gap: 10px; align-items: end; margin: 14px 0; }
+.staff-role-form label { display: grid; gap: 6px; color: #68776e; font-size: 10px; font-weight: 700; }
+.staff-role-form input, .staff-role-form select, .staff-role-row select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: #fff; color: var(--ink); font: inherit; }
+.staff-role-list { display: grid; gap: 8px; }
+.staff-role-row { display: grid; grid-template-columns: minmax(180px, 1fr) 190px auto; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 11px; padding: 10px; }
+.product-admin-list { display: grid; gap: 8px; }
+.product-admin-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto auto; gap: 11px; align-items: center; border: 1px solid var(--line); border-radius: 11px; padding: 10px; }
+.product-admin-row strong { font-size: 11px; }
+.product-admin-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 9px; }
+.product-state { border-radius: 99px; background: #edf3ee; color: var(--forest); padding: 5px 8px; font-size: 9px; font-weight: 700; }
+.product-state.draft { color: #8b7042; background: #fff6e6; }
+.product-state.archived { color: #858c87; background: #f0f1ee; }
+.product-row-actions { display: flex; gap: 5px; }
+.product-row-actions button { border: 0; border-radius: 7px; padding: 6px 8px; color: var(--forest); background: #edf3ee; font-size: 9px; font-weight: 700; }
+.product-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 16px; padding: 15px; border-radius: 12px; background: #f7f8f4; }
+.product-form > label { display: grid; gap: 6px; color: #68776e; font-size: 10px; font-weight: 700; }
+.product-form input, .product-form select, .product-form textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: #fff; color: var(--ink); font: inherit; }
+.product-form textarea { min-height: 65px; resize: vertical; }
+.product-form .description-field { grid-column: span 3; }
+.attribute-fields { display: contents; }
+.attribute-fields label { display: grid; gap: 6px; color: #68776e; font-size: 10px; font-weight: 700; }
+.attribute-fields input, .attribute-fields select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: #fff; color: var(--ink); font: inherit; }
+.attribute-fields input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--forest); }
+.form-actions { grid-column: span 3; display: flex; justify-content: flex-end; gap: 8px; }
 @media (max-width: 720px) {
+  .policy-grid { grid-template-columns: 1fr; }
+  .staff-role-form { grid-template-columns: 1fr 1fr; }
+  .staff-role-form button { grid-column: 1 / -1; }
+  .staff-role-row { grid-template-columns: minmax(0, 1fr) 1fr; }
+  .staff-role-row button { grid-column: 1 / -1; justify-self: end; }
+  .product-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .product-form .description-field, .product-form .form-actions { grid-column: span 2; }
+  .product-admin-row { grid-template-columns: 34px minmax(0, 1fr) auto; }
+  .product-admin-row .product-row-actions { grid-column: 2 / -1; }
   .store-row { grid-template-columns: 34px minmax(80px, 1fr) auto auto; }
   .store-row .status { display: none; }
   .store-page-select { width: 88px; }

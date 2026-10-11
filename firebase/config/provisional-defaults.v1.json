@@ -19,8 +19,20 @@
       { "id": "activities", "label": { "en": "Activities", "bn": "কার্যক্রম" }, "enabled": true, "sortOrder": 40 }
     ],
     "productTypes": [
-      { "id": "book", "label": { "en": "Books", "bn": "বই" }, "schemaVersion": 1, "renderer": "book_v1", "attributes": [], "enabled": true },
-      { "id": "toy", "label": { "en": "Toys", "bn": "খেলনা" }, "schemaVersion": 1, "renderer": "physical_good_v1", "attributes": [], "enabled": true }
+      { "id": "book", "label": { "en": "Books", "bn": "বই" }, "schemaVersion": 1, "renderer": "book_v1", "attributes": [
+        { "id": "author", "label": { "en": "Author", "bn": "লেখক" }, "valueType": "text", "required": true },
+        { "id": "age_band", "label": { "en": "Recommended age", "bn": "প্রস্তাবিত বয়স" }, "valueType": "text", "required": true },
+        { "id": "page_count", "label": { "en": "Page count", "bn": "পৃষ্ঠা সংখ্যা" }, "valueType": "number", "required": false }
+      ], "enabled": true },
+      { "id": "toy", "label": { "en": "Toys", "bn": "খেলনা" }, "schemaVersion": 1, "renderer": "physical_good_v1", "attributes": [
+        { "id": "age_band", "label": { "en": "Recommended age", "bn": "প্রস্তাবিত বয়স" }, "valueType": "text", "required": true },
+        { "id": "material", "label": { "en": "Material", "bn": "উপাদান" }, "valueType": "enum", "required": false, "options": [
+          { "value": "wood", "label": { "en": "Wood", "bn": "কাঠ" } },
+          { "value": "paper", "label": { "en": "Paper", "bn": "কাগজ" } },
+          { "value": "fabric", "label": { "en": "Fabric", "bn": "কাপড়" } },
+          { "value": "plastic", "label": { "en": "Plastic", "bn": "প্লাস্টিক" } }
+        ] }
+      ], "enabled": true }
     ],
     "storefronts": [
       { "id": "books", "slug": "books", "title": { "en": "Books", "bn": "বই" }, "description": { "en": "Stories for every little reader.", "bn": "প্রতিটি ছোট পাঠকের জন্য গল্প।" }, "productTypeIds": ["book"], "categoryIds": ["animals", "friendship", "nature", "bedtime", "courage"], "landingPageId": "books-home", "navigationVisible": true, "enabled": true, "sortOrder": 10, "regions": ["BD"] },

@@ -34,8 +34,27 @@ data class ManagedProductType(
     val banglaLabel: String,
     val renderer: ProductRenderer,
     val schemaVersion: Int = 1,
-    val enabled: Boolean = true
+    val enabled: Boolean = true,
+    val attributes: List<ManagedProductAttributeDefinition> = emptyList()
 )
+
+/** Admin-declared metadata can add fields to a supported product template without Android code changes. */
+data class ManagedProductAttributeDefinition(
+    val id: String,
+    val englishLabel: String,
+    val banglaLabel: String,
+    val valueType: ProductAttributeType,
+    val required: Boolean = false,
+    val options: List<ManagedProductAttributeOption> = emptyList()
+)
+
+data class ManagedProductAttributeOption(
+    val value: String,
+    val englishLabel: String,
+    val banglaLabel: String
+)
+
+enum class ProductAttributeType { TEXT, NUMBER, BOOLEAN, ENUM, TEXT_LIST }
 
 data class ManagedStorefront(
     val id: String,
