@@ -9,6 +9,23 @@ LittlePages has three intended Firebase environments: development, staging, and 
 - Admin/server credentials: use the deployment platform's secret manager or workload identity. Never put a service-account JSON file in the Android app, website, or repository.
 - Local developer setup: keep project selection and local-only values in ignored local configuration. Do not put private keys or payment credentials in `local.properties`, source code, or a client config.
 
+The Android build now accepts public Firebase app options through Gradle properties or the ignored root `local.properties`. Select one environment without editing source code:
+
+```properties
+littlepages.environment=development
+firebase.development.projectId=
+firebase.development.appId=
+firebase.development.apiKey=
+firebase.staging.projectId=
+firebase.staging.appId=
+firebase.staging.apiKey=
+firebase.production.projectId=
+firebase.production.appId=
+firebase.production.apiKey=
+```
+
+To select another environment in CI, pass `-Plittlepages.environment=staging` and supply that environment's values as Gradle properties from the CI secret/configuration store. Project ID, Firebase app ID, and Firebase client API key are client configuration values, not server secrets; Firestore/Storage rules and App Check still protect the services. A missing triplet produces `BuildConfig.FIREBASE_CONFIGURED == false`. The app does not consume these fields yet because the Firebase SDK and adapters are not connected.
+
 ## Required values before wiring the clients
 
 For each environment, record the Firebase project ID, Android package/app registration, web app registration, enabled Authentication providers, Firestore location, Storage bucket, App Check app registrations, and authorized domains in the team's private deployment record. Production values and provider secrets require owner-controlled access.

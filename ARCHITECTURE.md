@@ -29,7 +29,7 @@ Start as packages in the app module. Extract Gradle modules only when build owne
 
 ## Configuration
 
-Do not commit service account keys, payment secrets, or production Firebase configuration. Add environment-specific Firebase app configuration only after the owner provides project IDs and app registrations. Secret values belong in CI/provider secret stores; client apps may contain public Firebase app identifiers, never server credentials.
+Do not commit service account keys, payment secrets, or production Firebase configuration. Android can select a Firebase environment and receive public app options through ignored local properties or CI Gradle properties; Firebase project IDs and app registrations still need owner setup. Secret values belong in CI/provider secret stores; client apps may contain public Firebase app identifiers, never server credentials. The Firebase SDK is not connected yet.
 
 The environment boundaries and required registrations are listed in `firebase/ENVIRONMENTS.md`. Trusted operation requirements, the fail-closed rules review, and the operations/monitoring plan are in `firebase/BACKEND_OPERATIONS.md`, `firebase/SECURITY_REVIEW.md`, and `firebase/OPERATIONS.md`. These are implementation contracts and review notes; they do not indicate that Firebase is connected.
 

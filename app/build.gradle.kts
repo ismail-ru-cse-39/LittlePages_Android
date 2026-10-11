@@ -11,6 +11,23 @@ val configuredVersion = Properties().apply {
 }
 val buildVersionName = configuredVersion.getProperty("VERSION_NAME", "1.2")
 val buildVersionCode = configuredVersion.getProperty("VERSION_CODE", "3").toInt()
+val localEnvironmentProperties = Properties().apply {
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) localPropertiesFile.inputStream().use { input -> load(input) }
+}
+fun environmentProperty(name: String): String = providers.gradleProperty(name).orNull
+    ?: localEnvironmentProperties.getProperty(name)
+    ?: ""
+fun asBuildConfigString(value: String): String = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
+val firebaseEnvironment = environmentProperty("littlepages.environment").ifBlank { "development" }
+require(firebaseEnvironment in setOf("development", "staging", "production")) {
+    "littlepages.environment must be development, staging, or production."
+}
+val firebaseProjectId = environmentProperty("firebase.$firebaseEnvironment.projectId")
+val firebaseApplicationId = environmentProperty("firebase.$firebaseEnvironment.appId")
+val firebaseApiKey = environmentProperty("firebase.$firebaseEnvironment.apiKey")
+val firebaseConfigured = firebaseProjectId.isNotBlank() && firebaseApplicationId.isNotBlank() && firebaseApiKey.isNotBlank()
 
 android {
     namespace = "com.littlepages.app"
@@ -22,9 +39,17 @@ android {
         targetSdk = 37
         versionCode = buildVersionCode
         versionName = buildVersionName
+        buildConfigField("String", "FIREBASE_ENVIRONMENT", asBuildConfigString(firebaseEnvironment))
+        buildConfigField("String", "FIREBASE_PROJECT_ID", asBuildConfigString(firebaseProjectId))
+        buildConfigField("String", "FIREBASE_APP_ID", asBuildConfigString(firebaseApplicationId))
+        buildConfigField("String", "FIREBASE_API_KEY", asBuildConfigString(firebaseApiKey))
+        buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString())
     }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 }
 
 dependencies {

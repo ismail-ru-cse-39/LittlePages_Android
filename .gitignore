@@ -8,6 +8,8 @@ local.properties
 app/src/**/google-services.json
 firebase/firebase-adminsdk*.json
 firebase/service-account*.json
+*.jks
+*.keystore
 .firebase/
 .runtimeconfig.json
 .env

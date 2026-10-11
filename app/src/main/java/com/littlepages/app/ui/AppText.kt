@@ -128,6 +128,33 @@ internal fun AppText(
 ) {
     val isBangla = LocalConfiguration.current.locales[0].language == "bn"
     val renderedText = if (!isBangla) text else when {
+        text.startsWith("by ") -> "লেখক: ${text.removePrefix("by ")}"
+        text.startsWith("Search results (") && text.endsWith(")") -> "অনুসন্ধানের ফলাফল (${banglaDigits(text.substringAfter('(').dropLast(1))})"
+        text.startsWith("Ages ") && text.contains("   ·   ") -> {
+            val (age, pages) = text.split("   ·   ", limit = 2)
+            "বয়স ${banglaDigits(age.removePrefix("Ages "))} · ${banglaDigits(pages.substringBefore(' '))} পৃষ্ঠা"
+        }
+        text.startsWith("⭐ ") && text.contains("reviews") -> "⭐ ${banglaDigits(text.substringAfter("⭐ ").substringBefore("  ·"))} · ${banglaDigits(text.substringAfter("· ").substringBefore(' '))}টি রিভিউ"
+        text.startsWith("Mode: ") -> "পাঠের ধরন: ${when (text.removePrefix("Mode: ")) { "Page turn" -> "পৃষ্ঠা ওল্টানো"; "Scroll" -> "স্ক্রল"; else -> "PDF" }}"
+        text.startsWith("Voice: ") && text.contains(" · Speed: ") -> {
+            val voice = text.substringAfter("Voice: ").substringBefore(" · Speed:")
+            val speed = text.substringAfter(" · Speed: ")
+            "কণ্ঠ: ${banglaCopy[voice] ?: voice} · গতি: ${banglaDigits(speed)}"
+        }
+        text.startsWith("Block ") && text.endsWith("?") -> "${text.removePrefix("Block ").dropLast(1)}-কে ব্লক করবেন?"
+        text.contains(" will be removed from the sample list.") -> {
+            val title = text.substringBefore(" will be removed from the sample list.")
+            "${banglaCopy[title] ?: title} নমুনা তালিকা থেকে সরানো হবে। ডিভাইসে সংরক্ষিত কোনো বইয়ের ফাইল মুছবে না।"
+        }
+        text.startsWith("Reference ") -> "রেফারেন্স ${text.removePrefix("Reference ")}"
+        text.startsWith("Delivery to ") -> "ডেলিভারির ঠিকানা: ${text.removePrefix("Delivery to ")}"
+        text.endsWith(" · English and বাংলা") -> "${localizedAge(text.substringBefore(" · English and বাংলা"))} · ইংরেজি ও বাংলা"
+        text.contains(" stories started · Brave Little Fox page ") -> {
+            val count = text.substringBefore(" stories started")
+            val page = text.substringAfter("Brave Little Fox page ").substringBefore(" of")
+            "${banglaDigits(count)}টি গল্প শুরু হয়েছে · সাহসী ছোট্ট শিয়াল, পৃষ্ঠা ${banglaDigits(page)} / ২৪"
+        }
+        text.matches(Regex("\\d+ / 24")) -> "${banglaDigits(text.substringBefore(" /"))} / ২৪"
         text.startsWith("Selected: ") -> "নির্বাচিত: ${text.substringAfter("Selected: ").substringBefore(". Payment")}। পেমেন্ট এখনো চালু হয়নি। PDF শুধু অ্যাপেই পড়া যাবে।"
         text.startsWith("The Brave Little Fox · ") && text.contains(" of 24 pages") -> "সাহসী ছোট্ট শিয়াল · ২৪টির মধ্যে ${banglaDigits(text.substringAfter("· ").substringBefore(" of"))} পৃষ্ঠা"
         text.endsWith("% complete") -> "${banglaDigits(text.substringBefore('%'))}% সম্পন্ন"
@@ -147,4 +174,10 @@ internal fun AppText(
         overflow = overflow,
         style = style
     )
+}
+
+private fun localizedAge(value: String): String = when {
+    value.startsWith("Ages ") -> "বয়স ${banglaDigits(value.removePrefix("Ages "))}"
+    value.matches(Regex("\\d+ years old")) -> "${banglaDigits(value.substringBefore(' '))} বছর বয়স"
+    else -> banglaCopy[value] ?: banglaDigits(value)
 }
