@@ -59,8 +59,8 @@ Resolve these decisions before connecting payments, publishing content, or colle
 ### Accounts and family setup
 
 - [x] Add guest browsing entry from sign-in, distinguish the guest profile, and gate key purchase, save, Premium, and parent-profile actions in the prototype.
-- [ ] Finish Google sign-in, email sign-in/sign-up, password reset, and phone verification screens.
-- [ ] Add parent account onboarding and child profile creation/editing.
+- [x] Finish Google/email/phone sign-in, sign-up, password reset, and phone-code entry screens with local validation and explicit unconfigured-service feedback; Firebase authentication remains in Phase 3.
+- [x] Add parent account onboarding and child profile creation/editing in a clearly labeled local preview; real accounts and consent remain unconfigured.
 - [x] Add account switching, sign-out, and parent-protected settings/purchase entry in the local preview; real account sessions remain in Phase 6.
 
 ### Discovery and reading
@@ -73,20 +73,20 @@ Resolve these decisions before connecting payments, publishing content, or colle
 - [x] Add the Reader **Listen** action and reusable gentle Premium upsell dialog (prototype interaction; subscription is not connected).
 - [x] Implement sample Read Along controls: Android TTS, word highlighting (engine word timing with estimated fallback), play/pause, seek, voice, speed, audio focus, and Autoplay pages. Production narration/content timing remains in Phase 5.
 - [x] Persist reader position and manual bookmarks and resume the selected book in the local preview.
-- [ ] Associate progress with real child profiles and show per-child progress UI.
-- [ ] Finish Offline Books list, storage status, remove-book flow, and sync status.
+- [x] Associate progress with selected local child profiles and show per-child reading progress; cloud sync remains in Phase 3.
+- [x] Finish the Offline Books preview list, storage/sync status, removal confirmation, and empty state; no files are stored until offline policy and encrypted storage are implemented in Phase 5.
 
 ### Community and family account
 
-- [ ] Finish parent feed, create-post/image selection, comments, groups, and discussion screens.
+- [x] Finish parent feed filters, post/image selection and rendering, comments, groups, and local discussion screens; moderation and persistence remain in Phase 7.
 - [x] Add review submission, report, block, and confirmation states in the local preview; server moderation remains in Phase 6.
-- [ ] Finish Parent Profile, child profiles, language selection, Premium, Orders, Privacy, and Support screens.
+- [x] Finish local Parent Profile, child profiles/progress, language selection, Premium preview, Orders, Privacy, and Support screens; service and policy connections remain pending.
 
 ### Purchases and recovery states
 
-- [ ] Finish book format selection, address capture for physical books, payment selection, and order confirmation.
-- [ ] Add subscription status, renewal, cancellation, expired, and payment-recovery screens.
-- [ ] Add service-specific recovery UI for failed book access, interrupted offline saves, and failed payments. A global offline banner is implemented; service retries depend on backend integration.
+- [x] Finish book format selection, physical address capture, bKash/Visa selection, and a local order confirmation/history flow; no payment is taken or order submitted.
+- [x] Add local preview states for subscription active, renewal, cancellation, expired, and payment issue; billing remains unconnected.
+- [x] Add book-access, offline-sync, and payment recovery UI with retry actions; retries explain that no remote service is connected and do not alter access or payment state.
 
 **Done when:** each screen can be reached through the app flow, primary actions have a defined outcome, and screens cover loading, empty, success, and failure states where applicable.
 
@@ -162,10 +162,10 @@ Resolve these decisions before connecting payments, publishing content, or colle
 
 Keep this section current as work proceeds:
 
-- **Current phase:** Phase 1/2 — Android foundation and local flow prototype
-- **Next task:** Finish the Offline Books list, storage status, remove-book flow, and sync status in the local preview; entitlement, expiry, and encrypted-storage policy decisions are still needed for production behavior.
+- **Current phase:** Phase 2 complete for local Android preview flows; Phase 0 product decisions and Phase 3 service setup block production integrations.
+- **Next task:** Define offline-book eligibility, storage limits, access expiry, and removal rules before implementing real offline storage.
 - **Blockers:** Firebase project IDs and app registrations; content catalogue and distribution rights; offline eligibility/expiry policy; free/Premium entitlements; privacy/parent-consent/data-retention approval; physical fulfillment terms; approved moderation rules; applicable digital billing flow. These decisions/integrations remain unchecked.
-- **Completed in this pass:** completed the local browsing/detail/review UI states, sample standard/Premium book access labels, preview account switching, review report/block confirmation, and reusable remote loading/error/retry components; user confirmed the responsive UI works on their tested device(s); added validated-network monitoring with an offline banner and updated empty/error-state tracking; made book-detail and checkout formats follow per-title PDF/print availability; added shared spacing, shape, size, breakpoint, and motion tokens and applied them across common layouts and key screens; added guest browsing with account gates; added a vector adaptive launcher icon; improved TalkBack labels/roles, interactive target sizing, and rating contrast; retained responsive layouts, narration, reader progress, locale foundations, and versioned Firebase contracts; direct APK output now uses `LittlePageApp_<version>.apk`; successful debug build produced `LittlePageApp_1.6.apk`.
+- **Completed in this pass:** finished the local auth/onboarding screens, child-specific reading progress, offline list/removal preview, parent feed with local image posts and group discussions, profile/privacy/support surfaces, sample checkout/order history, subscription lifecycle previews, and service recovery flows; previous local browsing/detail/review states, preview account switching, report/block confirmation, and reusable loading/error/retry components remain complete. No Firebase, account, storage, payment, moderation, or support request was connected, and no build was run.
 - **Important limit:** local reading data uses a placeholder profile ID and has no cloud sync. Read-along speaks sample text using an installed English Android TTS voice; exact word timing depends on the engine and falls back to estimated highlighting. No licensed book text/audio/timing is connected. Sample catalogue availability is local metadata. Community images are not uploaded. Authentication, payment, real book content, offline content storage, and Firebase services are not connected. Network status is monitored, but data fetching and service-specific retries are not yet implemented.
 - **Decision log (2026-10-11):** English and Bangla are launch languages. PDFs are in-app only for every customer, including Premium. Premium narration/word highlighting is a subscription feature. When a physical edition is available, offer both in-app PDF access and the printed book. Requested Bangladesh payment methods are bKash and Visa. Offline access is required; entitlement, expiry, and storage policy remain open.
 

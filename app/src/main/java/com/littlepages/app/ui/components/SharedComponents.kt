@@ -1,5 +1,8 @@
 package com.littlepages.app.ui.components
 
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -18,6 +21,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -32,6 +38,8 @@ import com.littlepages.app.ui.theme.PagesBreakpoints
 import com.littlepages.app.ui.theme.PagesSizes
 import com.littlepages.app.ui.theme.PagesShapes
 import com.littlepages.app.ui.theme.PagesSpacing
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 // Shared layout and design-system components.
 @Composable
@@ -165,13 +173,14 @@ internal fun GroupTile(title: String, members: String, emoji: String, onClick: (
 }
 
 @Composable
-internal fun CommunityPost(name: String, time: String, body: String, photo: String, onClick: (() -> Unit)?) {
+internal fun CommunityPost(name: String, time: String, body: String, photo: String, onClick: (() -> Unit)?, imageUri: Uri? = null) {
     var liked by remember(name, time, body) { mutableStateOf(false) }
     var likeCount by remember(name, time, body) { mutableIntStateOf(24) }
     CardSurface(Modifier.fillMaxWidth().padding(bottom = PagesSpacing.ControlGap)) {
         Row(verticalAlignment = Alignment.CenterVertically) { Avatar(name.first().toString()); Column(Modifier.padding(start = PagesSpacing.ControlGap).weight(1f)) { AppText(name, fontWeight = FontWeight.Bold); AppText(time, color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall) }; Icon(Icons.Filled.MoreHoriz, "Post options", tint = PagesColors.Muted) }
         AppText(body, modifier = Modifier.padding(top = PagesSpacing.Compact), style = MaterialTheme.typography.bodyMedium)
-        if (photo.isNotBlank()) Box(Modifier.fillMaxWidth().padding(top = PagesSpacing.ControlGap).height(PagesSizes.CommunityImageHeight).clip(RoundedCornerShape(PagesShapes.Control)).background(PagesColors.Sage), contentAlignment = Alignment.Center) { AppText(photo, fontSize = 56.sp) }
+        if (imageUri != null) CommunityPostImage(imageUri)
+        else if (photo.isNotBlank()) Box(Modifier.fillMaxWidth().padding(top = PagesSpacing.ControlGap).height(PagesSizes.CommunityImageHeight).clip(RoundedCornerShape(PagesShapes.Control)).background(PagesColors.Sage), contentAlignment = Alignment.Center) { AppText(photo, fontSize = 56.sp) }
         Row(Modifier.padding(top = PagesSpacing.ControlGap), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { liked = !liked; likeCount += if (liked) 1 else -1 }) {
                 Icon(if (liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = if (liked) "Unlike post" else "Like post", tint = if (liked) PagesColors.Forest else PagesColors.Muted)
@@ -181,6 +190,27 @@ internal fun CommunityPost(name: String, time: String, body: String, photo: Stri
             else AppText("8 comments", Modifier.weight(1f), color = PagesColors.Muted, textAlign = TextAlign.Center)
             AppText("Share", color = PagesColors.Forest)
         }
+    }
+}
+
+@Composable
+private fun CommunityPostImage(uri: Uri) {
+    val context = LocalContext.current
+    val imageBitmap by produceState<ImageBitmap?>(initialValue = null, key1 = uri) {
+        value = withContext(Dispatchers.IO) {
+            val resolver = context.contentResolver
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+            var sampleSize = 1
+            while (bounds.outWidth / sampleSize > 1200 || bounds.outHeight / sampleSize > 1200) sampleSize *= 2
+            val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options)?.asImageBitmap() }
+        }
+    }
+    if (imageBitmap == null) {
+        Box(Modifier.fillMaxWidth().padding(top = PagesSpacing.ControlGap).height(PagesSizes.CommunityImageHeight).clip(RoundedCornerShape(PagesShapes.Control)).background(PagesColors.Sage), contentAlignment = Alignment.Center) { AppText("Loading photo…", color = PagesColors.Muted) }
+    } else {
+        Image(imageBitmap!!, contentDescription = "Photo shared by a parent", modifier = Modifier.fillMaxWidth().padding(top = PagesSpacing.ControlGap).height(PagesSizes.CommunityImageHeight).clip(RoundedCornerShape(PagesShapes.Control)))
     }
 }
 

@@ -67,9 +67,9 @@ import com.littlepages.app.ui.theme.PagesShapes
 import kotlinx.coroutines.delay
 
 private enum class Page {
-    Welcome, EmailAuth, PhoneAuth, Home, Library, Search, BookDetails, Reader, Listen, ListenPreview,
-    Community, Group, CreatePost, Reviews, Offline, Parent, Profiles, Subscription,
-    Checkout, Orders, Support
+    Welcome, EmailAuth, PasswordReset, PhoneAuth, PhoneCode, ParentSetup, Home, Library, Search, BookDetails, Reader, Listen, ListenPreview,
+    Community, Group, CreatePost, Reviews, Offline, Parent, Profiles, Privacy, Subscription,
+    Checkout, OrderConfirmation, Recovery, Orders, Support
 }
 
 internal data class Book(val title: String, val author: String, val age: String, val emoji: String, val tint: Color, val rating: String = "4.9", val categories: Set<String> = emptySet(), val minimumAge: Int = 0, val maximumAge: Int = 12, val hasBangla: Boolean = true, val isAvailable: Boolean = true, val pdfAvailable: Boolean = true, val physicalAvailable: Boolean = true, val premiumOnly: Boolean = false)
@@ -79,8 +79,11 @@ private val books = listOf(
     Book("The Kind Giant", "Oliver Reed", "Ages 5–9", "🌿", PagesColors.Peach, categories = setOf("Friendship", "Nature"), minimumAge = 5, maximumAge = 9, pdfAvailable = false, premiumOnly = true),
     Book("The Star Keeper", "Nadia Noor", "Ages 4–8", "🌙", Color(0xFFE8E4F3), categories = setOf("Nature", "Bedtime"), minimumAge = 4, maximumAge = 8, isAvailable = false, pdfAvailable = false, physicalAvailable = false)
 )
-private data class CommunityEntry(val body: String, val hasPhoto: Boolean)
-private data class ChildProfile(val nickname: String, val ageBand: String)
+private data class CommunityEntry(val body: String, val imageUri: android.net.Uri? = null, val category: String = "Stories", val author: String = "You", val time: String = "Just now") {
+    val hasPhoto: Boolean get() = imageUri != null
+}
+private data class ChildProfile(val nickname: String, val ageBand: String, val id: String = "${nickname.lowercase()}-${ageBand.filter(Char::isDigit)}")
+private data class PurchasePreview(val id: String, val bookTitle: String, val format: String, val paymentMethod: String, val fullName: String = "", val address: String = "", val phone: String = "")
 
 @Composable
 fun LittlePagesApp() {
@@ -92,9 +95,16 @@ fun LittlePagesApp() {
     }
     val stack = rememberSaveable(saver = navigationStackSaver) { mutableStateListOf(Page.Welcome) }
     var guestMode by rememberSaveable { mutableStateOf(false) }
+    var parentPreviewMode by rememberSaveable { mutableStateOf(false) }
     var premium by remember { mutableStateOf(false) }
     var premiumPrompt by remember { mutableStateOf(false) }
     var unavailableNotice by remember { mutableStateOf<String?>(null) }
+    var recoveryType by remember { mutableStateOf("book") }
+    var phoneNumber by remember { mutableStateOf("") }
+    var pendingParentEmail by remember { mutableStateOf("") }
+    var previewParentName by rememberSaveable { mutableStateOf("") }
+    var previewParentEmail by rememberSaveable { mutableStateOf("") }
+    var lastPurchase by remember { mutableStateOf<PurchasePreview?>(null) }
     var selectedBook by remember { mutableStateOf(books.first()) }
     var query by remember { mutableStateOf("") }
     val appConfiguration = LocalConfiguration.current
@@ -133,11 +143,15 @@ fun LittlePagesApp() {
     var autoplay by remember { mutableStateOf(true) }
     var readerMode by remember { mutableStateOf("Page turn") }
     val progressStore = remember(appContext) { ReaderProgressStore(appContext) }
-    val activeChildId = "local-profile"
-    var currentPage by remember(selectedBook.title) { mutableIntStateOf(progressStore.page(activeChildId, selectedBook.title).coerceIn(1, 24)) }
-    var bookmarked by remember(selectedBook.title, currentPage) { mutableStateOf(progressStore.isBookmarked(activeChildId, selectedBook.title, currentPage)) }
-    val communityPosts = remember { mutableStateListOf<CommunityEntry>() }
     val childProfiles = remember { mutableStateListOf(ChildProfile("Emma", "5 years old")) }
+    var selectedChildId by rememberSaveable { mutableStateOf(childProfiles.first().id) }
+    val activeChildId = childProfiles.firstOrNull { it.id == selectedChildId }?.id ?: childProfiles.first().id
+    var currentPage by remember(selectedBook.title, activeChildId) { mutableIntStateOf(progressStore.page(activeChildId, selectedBook.title).coerceIn(1, 24)) }
+    var bookmarked by remember(selectedBook.title, activeChildId, currentPage) { mutableStateOf(progressStore.isBookmarked(activeChildId, selectedBook.title, currentPage)) }
+    val communityPosts = remember { mutableStateListOf<CommunityEntry>() }
+    val groupPosts = remember { mutableStateListOf<CommunityEntry>() }
+    val offlineBookTitles = remember { mutableStateListOf(books[0].title, books[1].title) }
+    val purchaseHistory = remember { mutableStateListOf<PurchasePreview>() }
     val savedBooks = remember { mutableStateListOf<String>() }
     val page = stack.last()
     fun go(next: Page) { stack.add(next) }
@@ -195,27 +209,33 @@ fun LittlePagesApp() {
           ) { target ->
             when (target) {
                 Page.Welcome -> WelcomeScreen(
-                    onGoogle = { unavailableNotice = "Google sign-in will be available after Firebase Authentication is configured." }, onEmail = { go(Page.EmailAuth) }, onPhone = { go(Page.PhoneAuth) }, onSignIn = { go(Page.EmailAuth) }, onGuest = { guestMode = true; stack.clear(); stack.add(Page.Home) }
+                    onGoogle = { unavailableNotice = "Google sign-in will be available after Firebase Authentication is configured." }, onEmail = { go(Page.EmailAuth) }, onPhone = { go(Page.PhoneAuth) }, onSignIn = { go(Page.EmailAuth) }, onGuest = { guestMode = true; parentPreviewMode = false; stack.clear(); stack.add(Page.Home) }, onParentPreview = { guestMode = false; parentPreviewMode = true; stack.clear(); stack.add(Page.Home) }
                 )
-                Page.EmailAuth -> EmailAuthScreen(onBack = ::back, onContinue = { unavailableNotice = "Email authentication is not connected yet. No account was created or signed in." }, onGoogle = { unavailableNotice = "Google sign-in will be available after Firebase Authentication is configured." }, onPhone = { go(Page.PhoneAuth) }, onPasswordReset = { unavailableNotice = "Password reset will be available after Firebase Authentication is configured." })
-                Page.PhoneAuth -> PhoneAuthScreen(onBack = ::back, onContinue = { unavailableNotice = "Phone verification is not connected yet. No verification code was sent." }, onEmail = { go(Page.EmailAuth) })
+                Page.EmailAuth -> EmailAuthScreen(onBack = ::back, onContinue = { creatingAccount, email -> if (creatingAccount) { pendingParentEmail = email; go(Page.ParentSetup) } else unavailableNotice = "Email authentication is not connected yet. No account was created or signed in." }, onGoogle = { unavailableNotice = "Google sign-in will be available after Firebase Authentication is configured." }, onPhone = { go(Page.PhoneAuth) }, onPasswordReset = { go(Page.PasswordReset) })
+                Page.PasswordReset -> PasswordResetScreen(onBack = ::back, onSubmit = { unavailableNotice = "Password reset is not connected. No reset email was sent." })
+                Page.PhoneAuth -> PhoneAuthScreen(onBack = ::back, onContinue = { phoneNumber = it; go(Page.PhoneCode) }, onEmail = { go(Page.EmailAuth) })
+                Page.PhoneCode -> PhoneVerificationScreen(phoneNumber = phoneNumber, onBack = ::back, onVerify = { unavailableNotice = "Phone verification is not connected yet. No code was sent or verified." })
+                Page.ParentSetup -> ParentOnboardingScreen(email = pendingParentEmail, onBack = ::back, onComplete = { name, email, child -> previewParentName = name; previewParentEmail = email; childProfiles.add(child); selectedChildId = child.id; parentPreviewMode = true; guestMode = false; stack.clear(); stack.add(Page.Home) })
                 Page.Home -> HomeScreen(continuePage = progressStore.page(activeChildId, books[0].title).coerceIn(1, 24), onBook = { selectedBook = it; go(Page.BookDetails) }, onContinue = { selectedBook = books[0]; go(Page.Reader) }, onLibrary = { stack.clear(); stack.add(Page.Library) }, onSearch = { go(Page.Search) }, onOffline = { go(Page.Offline) }, onPremium = { go(Page.Subscription) })
                 Page.Library -> LibraryScreen(onBook = { selectedBook = it; go(Page.BookDetails) }, onSearch = { go(Page.Search) }, onOffline = { go(Page.Offline) })
                 Page.Search -> SearchScreen(query = query, onQuery = { query = it }, onBook = { selectedBook = it; go(Page.BookDetails) }, onBack = ::back)
-                Page.BookDetails -> BookDetailsScreen(book = selectedBook, saved = selectedBook.title in savedBooks, premiumUnlocked = premium, onPremiumRequired = { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else premiumPrompt = true }, onSave = { if (guestMode) unavailableNotice = "Create a parent account to save books." else if (selectedBook.title in savedBooks) savedBooks.remove(selectedBook.title) else savedBooks.add(selectedBook.title) }, onBack = ::back, onRead = { if (selectedBook.premiumOnly && !premium) { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else premiumPrompt = true } else go(Page.Reader) }, onListen = { if (guestMode) unavailableNotice = "Create a parent account to use Premium listening." else openPremiumFeature() }, onReviews = { go(Page.Reviews) }, onOrder = { if (guestMode) unavailableNotice = "Create a parent account to order books." else go(Page.Checkout) })
+                Page.BookDetails -> BookDetailsScreen(book = selectedBook, saved = selectedBook.title in savedBooks, premiumUnlocked = premium, onPremiumRequired = { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else premiumPrompt = true }, onSave = { if (guestMode) unavailableNotice = "Create a parent account to save books." else if (selectedBook.title in savedBooks) savedBooks.remove(selectedBook.title) else savedBooks.add(selectedBook.title) }, onBack = ::back, onRead = { if (selectedBook.premiumOnly && !premium) { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else premiumPrompt = true } else go(Page.Reader) }, onListen = { if (guestMode) unavailableNotice = "Create a parent account to use Premium listening." else openPremiumFeature() }, onReviews = { go(Page.Reviews) }, onOrder = { if (guestMode) unavailableNotice = "Create a parent account to order books." else go(Page.Checkout) }, onRecovery = { recoveryType = "book"; go(Page.Recovery) })
                 Page.Reader -> ReaderScreen(book = selectedBook, mode = readerMode, page = currentPage, bookmarked = bookmarked, onBookmark = { bookmarked = progressStore.toggleBookmark(activeChildId, selectedBook.title, currentPage) }, onPage = { currentPage = it; progressStore.savePage(activeChildId, selectedBook.title, it) }, onMode = { readerMode = it }, onBack = ::back, onListen = ::openPremiumFeature, onPremium = { premiumPrompt = true })
                 Page.Listen -> ListenScreen(book = selectedBook, page = currentPage, autoplay = autoplay, onAutoplay = { autoplay = it }, onPageAdvance = { if (currentPage < 24) { currentPage += 1; progressStore.savePage(activeChildId, selectedBook.title, currentPage) } }, onBack = ::back)
                 Page.ListenPreview -> ListenScreen(book = selectedBook, page = currentPage, autoplay = false, onAutoplay = {}, onPageAdvance = {}, onBack = ::back, previewOnly = true)
-                Page.Community -> CommunityScreen(posts = communityPosts, onGroup = { go(Page.Group) }, onCreate = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
-                Page.Group -> GroupScreen(onBack = ::back, onCreatePost = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
-                Page.CreatePost -> CreatePostScreen(onBack = ::back, onPost = { communityPosts.add(0, it); back() })
+                Page.Community -> CommunityScreen(posts = communityPosts, onGroup = { if (guestMode) unavailableNotice = "Create a parent account to join a group." else go(Page.Group) }, onCreate = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
+                Page.Group -> GroupScreen(posts = groupPosts, onBack = ::back, onCreatePost = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
+                Page.CreatePost -> CreatePostScreen(onBack = ::back, onPost = { post -> if (stack.getOrNull(stack.lastIndex - 1) == Page.Group) groupPosts.add(0, post) else communityPosts.add(0, post); back() })
                 Page.Reviews -> ReviewsScreen(book = selectedBook, onBack = ::back)
-                Page.Offline -> OfflineScreen(onBack = ::back, onBrowse = { stack.clear(); stack.add(Page.Library) })
-                Page.Parent -> ParentScreen(guest = guestMode, language = selectedLanguage, child = childProfiles.firstOrNull(), onLanguage = { tag -> selectedLanguage = tag; activity?.let { AppLanguage.set(it, tag) } }, onProfiles = { if (guestMode) unavailableNotice = "Create a parent account to add child profiles." else go(Page.Profiles) }, onSubscription = { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else go(Page.Subscription) }, onOrders = { if (guestMode) unavailableNotice = "Sign in to view orders." else go(Page.Orders) }, onSupport = { go(Page.Support) }, onOffline = { if (guestMode) unavailableNotice = "Sign in to manage offline books." else go(Page.Offline) }, onUnavailable = { message -> if (guestMode) { guestMode = false; stack.clear(); stack.add(Page.Welcome) } else unavailableNotice = message }, onCreateAccount = { guestMode = false; stack.clear(); stack.add(Page.Welcome) })
-                Page.Profiles -> ProfilesScreen(children = childProfiles, onBack = ::back, onSaveChild = { old, updated -> if (old == null) childProfiles.add(updated) else { val index = childProfiles.indexOf(old); if (index >= 0) childProfiles[index] = updated } })
-                Page.Subscription -> SubscriptionScreen(premium = premium, onBack = ::back, onSubscribe = { unavailableNotice = "Subscription checkout is not connected yet. Premium access will only activate after a verified payment." }, onPreview = { go(Page.ListenPreview) })
-                Page.Checkout -> CheckoutScreen(book = selectedBook, onBack = ::back, onComplete = { unavailableNotice = "Checkout is not connected yet. No payment or order has been placed." })
-                Page.Orders -> OrdersScreen(onBack = ::back)
+                Page.Offline -> OfflineScreen(books = books.filter { it.title in offlineBookTitles }, onBack = ::back, onBrowse = { stack.clear(); stack.add(Page.Library) }, onRemove = { offlineBookTitles.remove(it.title) }, onRetrySync = { recoveryType = "offline"; go(Page.Recovery) })
+                Page.Parent -> ParentScreen(guest = guestMode, previewAccount = parentPreviewMode, parentName = previewParentName, parentEmail = previewParentEmail, language = selectedLanguage, child = childProfiles.firstOrNull { it.id == activeChildId }, onLanguage = { tag -> selectedLanguage = tag; activity?.let { AppLanguage.set(it, tag) } }, onProfiles = { if (guestMode) unavailableNotice = "Create a parent account to add child profiles." else go(Page.Profiles) }, onSubscription = { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else go(Page.Subscription) }, onOrders = { if (guestMode) unavailableNotice = "Sign in to view orders." else go(Page.Orders) }, onSupport = { go(Page.Support) }, onOffline = { if (guestMode) unavailableNotice = "Sign in to manage offline books." else go(Page.Offline) }, onPrivacy = { go(Page.Privacy) }, onUnavailable = { message -> if (guestMode || parentPreviewMode) { guestMode = false; parentPreviewMode = false; stack.clear(); stack.add(Page.Welcome) } else unavailableNotice = message }, onCreateAccount = { guestMode = false; parentPreviewMode = false; stack.clear(); stack.add(Page.Welcome) })
+                Page.Profiles -> ProfilesScreen(children = childProfiles, selectedChildId = activeChildId, progressStore = progressStore, onSelectChild = { selectedChildId = it }, onBack = ::back, onSaveChild = { old, updated -> if (old == null) childProfiles.add(updated) else { val index = childProfiles.indexOf(old); if (index >= 0) childProfiles[index] = updated } })
+                Page.Privacy -> PrivacyScreen(onBack = ::back)
+                Page.Subscription -> SubscriptionScreen(premium = premium, onBack = ::back, onSubscribe = { unavailableNotice = "Subscription checkout is not connected yet. Premium access will only activate after a verified payment." }, onPreview = { go(Page.ListenPreview) }, onPaymentRecovery = { recoveryType = "payment"; go(Page.Recovery) })
+                Page.Checkout -> CheckoutScreen(book = selectedBook, onBack = ::back, onComplete = { format, method, name, address, phone -> PurchasePreview("LP-PREVIEW-${System.currentTimeMillis()}", selectedBook.title, format, method, name, address, phone).also { lastPurchase = it; purchaseHistory.add(0, it); go(Page.OrderConfirmation) } }, onPaymentRecovery = { recoveryType = "payment"; go(Page.Recovery) })
+                Page.OrderConfirmation -> OrderConfirmationScreen(order = lastPurchase, onViewOrders = { stack.clear(); stack.add(Page.Orders) }, onContinueReading = { stack.clear(); stack.add(Page.Reader) })
+                Page.Recovery -> ServiceRecoveryScreen(type = recoveryType, onBack = ::back, onRetry = { unavailableNotice = when (recoveryType) { "payment" -> "Payment is not connected. No charge was made and your order was not placed."; "offline" -> "Offline storage is not connected. No book files were changed."; else -> "Book access is not connected. Your reading progress is unchanged." } })
+                Page.Orders -> OrdersScreen(orders = purchaseHistory, onBack = ::back)
                 Page.Support -> SupportScreen(onBack = ::back, onSubmit = { unavailableNotice = "Support requests are not connected yet. Your message has not been sent." })
             }
           }
@@ -242,7 +262,7 @@ private fun NetworkStatusBanner() {
 }
 
 @Composable
-private fun WelcomeScreen(onGoogle: () -> Unit, onEmail: () -> Unit, onPhone: () -> Unit, onSignIn: () -> Unit, onGuest: () -> Unit) {
+private fun WelcomeScreen(onGoogle: () -> Unit, onEmail: () -> Unit, onPhone: () -> Unit, onSignIn: () -> Unit, onGuest: () -> Unit, onParentPreview: () -> Unit) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
       val compactHeight = maxHeight < PagesBreakpoints.CompactHeight
       Column(
@@ -265,6 +285,7 @@ private fun WelcomeScreen(onGoogle: () -> Unit, onEmail: () -> Unit, onPhone: ()
         Spacer(Modifier.height(PagesSpacing.ControlGap))
         OutlineButton("Continue with phone", Icons.Filled.Phone, onPhone)
         TextButton(onClick = onGuest, modifier = Modifier.padding(top = PagesSpacing.Small)) { AppText("Continue as guest", color = PagesColors.Forest, fontWeight = FontWeight.SemiBold) }
+        TextButton(onClick = onParentPreview) { AppText("Explore parent features · preview", color = PagesColors.Forest) }
         Spacer(Modifier.height(PagesSpacing.Medium))
         Row(verticalAlignment = Alignment.CenterVertically) {
             AppText("Already have an account? ", color = PagesColors.Muted)
@@ -276,7 +297,7 @@ private fun WelcomeScreen(onGoogle: () -> Unit, onEmail: () -> Unit, onPhone: ()
 }
 
 @Composable
-private fun EmailAuthScreen(onBack: () -> Unit, onContinue: () -> Unit, onGoogle: () -> Unit, onPhone: () -> Unit, onPasswordReset: () -> Unit) {
+private fun EmailAuthScreen(onBack: () -> Unit, onContinue: (creatingAccount: Boolean, email: String) -> Unit, onGoogle: () -> Unit, onPhone: () -> Unit, onPasswordReset: () -> Unit) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
@@ -297,7 +318,7 @@ private fun EmailAuthScreen(onBack: () -> Unit, onContinue: () -> Unit, onGoogle
             TextButton(onClick = onPasswordReset, modifier = Modifier.align(Alignment.End), contentPadding = PaddingValues(horizontal = PagesSpacing.Small)) { AppText("Forgot password?", color = PagesColors.Forest) }
         }
         Spacer(Modifier.height(PagesSpacing.Relaxed))
-        PrimaryButton(if (creatingAccount) "Create account" else "Sign in", null) { submitted = true; if (validEmail && validPassword && (!creatingAccount || passwordsMatch)) onContinue() }
+        PrimaryButton(if (creatingAccount) "Create account" else "Sign in", null) { submitted = true; if (validEmail && validPassword && (!creatingAccount || passwordsMatch)) onContinue(creatingAccount, email.trim()) }
         TextButton(onClick = { creatingAccount = !creatingAccount; submitted = false; confirmPassword = "" }, modifier = Modifier.align(Alignment.CenterHorizontally)) { AppText(if (creatingAccount) "Already have an account? Sign in" else "New to LittlePages? Create an account", color = PagesColors.Forest) }
         OrDivider()
         OutlineButton("Continue with Google", Icons.Filled.AccountCircle, onGoogle)
@@ -307,19 +328,61 @@ private fun EmailAuthScreen(onBack: () -> Unit, onContinue: () -> Unit, onGoogle
 }
 
 @Composable
-private fun PhoneAuthScreen(onBack: () -> Unit, onContinue: () -> Unit, onEmail: () -> Unit) {
+private fun PasswordResetScreen(onBack: () -> Unit, onSubmit: () -> Unit) {
+    var email by remember { mutableStateOf("") }
+    var submitted by remember { mutableStateOf(false) }
+    val validEmail = android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
+    FormPage(title = "Reset your password", subtitle = "Enter the parent email for your account. The reset service is not connected in this preview.", onBack = onBack) {
+        OutlinedTextField(email, { email = it }, label = { AppText("Email address") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && !validEmail, supportingText = { if (submitted && !validEmail) AppText("Enter a valid email address.") })
+        PrimaryButton("Send reset link", Icons.AutoMirrored.Filled.Send) { submitted = true; if (validEmail) onSubmit() }
+    }
+}
+
+@Composable
+private fun PhoneAuthScreen(onBack: () -> Unit, onContinue: (String) -> Unit, onEmail: () -> Unit) {
     var phone by remember { mutableStateOf("") }
     var submitted by remember { mutableStateOf(false) }
-    FormPage(title = "Continue with phone", subtitle = "We’ll text a one-time code to verify your number.", onBack = onBack) {
+    FormPage(title = "Continue with phone", subtitle = "Enter a number to preview the verification flow. SMS delivery is disabled here.", onBack = onBack) {
         Row(horizontalArrangement = Arrangement.spacedBy(PagesSpacing.Small), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(value = "+880", onValueChange = {}, readOnly = true, label = { AppText("Code") }, modifier = Modifier.width(PagesSizes.PhoneCountryCodeWidth), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true)
             OutlinedTextField(value = phone, onValueChange = { phone = it.filter(Char::isDigit).take(15) }, label = { AppText("Phone number") }, leadingIcon = { Icon(Icons.Filled.Phone, null) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && phone.length < 8, supportingText = { if (submitted && phone.length < 8) AppText("Enter a valid phone number.") })
         }
         Spacer(Modifier.height(PagesSpacing.SectionGap))
-        PrimaryButton("Send verification code", Icons.Filled.Sms) { submitted = true; if (phone.length >= 8) onContinue() }
+        PrimaryButton("Continue to code entry", Icons.Filled.Sms) { submitted = true; if (phone.length >= 8) onContinue("+880$phone") }
         AppText("We use your number only to secure your account.", color = PagesColors.Muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(PagesSpacing.CardContent))
         OrDivider()
         OutlineButton("Continue with email", Icons.Filled.Email, onEmail)
+    }
+}
+
+@Composable
+private fun PhoneVerificationScreen(phoneNumber: String, onBack: () -> Unit, onVerify: () -> Unit) {
+    var code by remember { mutableStateOf("") }
+    var submitted by remember { mutableStateOf(false) }
+    FormPage(title = "Verify your number", subtitle = "A code would be sent to $phoneNumber. Enter it here to preview verification. SMS delivery is disabled.", onBack = onBack) {
+        OutlinedTextField(value = code, onValueChange = { code = it.filter(Char::isDigit).take(6) }, label = { AppText("Verification code") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && code.length != 6, supportingText = { if (submitted && code.length != 6) AppText("Enter all 6 digits.") })
+        PrimaryButton("Preview verification", Icons.Filled.VerifiedUser) { submitted = true; if (code.length == 6) onVerify() }
+        TextButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterHorizontally)) { AppText("Change phone number", color = PagesColors.Forest) }
+        AppText("No SMS was sent. Verification will be available after Firebase Authentication is configured.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+    }
+}
+
+@Composable
+private fun ParentOnboardingScreen(email: String, onBack: () -> Unit, onComplete: (String, String, ChildProfile) -> Unit) {
+    var parentName by remember { mutableStateOf("") }
+    var childName by remember { mutableStateOf("") }
+    var ageBand by remember { mutableStateOf("5 years old") }
+    var submitted by remember { mutableStateOf(false) }
+    PageScaffold(onBack, "Set up your family") {
+        AppText("Create a parent profile and add a child reader.", color = PagesColors.Muted)
+        OutlinedTextField(value = parentName, onValueChange = { parentName = it.take(50) }, label = { AppText("Parent name") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && parentName.isBlank())
+        OutlinedTextField(value = email, onValueChange = {}, readOnly = true, label = { AppText("Parent email") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true)
+        SectionTitle("First child profile")
+        OutlinedTextField(value = childName, onValueChange = { childName = it.take(30) }, label = { AppText("Child nickname") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && childName.isBlank())
+        AppText("Age range", color = PagesColors.Muted, modifier = Modifier.padding(top = PagesSpacing.Compact, bottom = PagesSpacing.Small))
+        Row(horizontalArrangement = Arrangement.spacedBy(PagesSpacing.Small)) { listOf("3 years old", "5 years old", "7 years old").forEach { option -> FilterChip(selected = ageBand == option, onClick = { ageBand = option }, label = { AppText(option.substringBefore(' ')) }) } }
+        AppText("This preview does not create an account or send your information. Connect authentication and parent consent before collecting real family details.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
+        PrimaryButton("Continue to family preview", Icons.Filled.FamilyRestroom) { submitted = true; if (parentName.isNotBlank() && childName.isNotBlank()) onComplete(parentName.trim(), email, ChildProfile(childName.trim(), ageBand, "child-${System.currentTimeMillis()}")) }
     }
 }
 
@@ -408,7 +471,7 @@ private fun SearchScreen(query: String, onQuery: (String) -> Unit, onBook: (Book
 }
 
 @Composable
-private fun BookDetailsScreen(book: Book, saved: Boolean, premiumUnlocked: Boolean, onPremiumRequired: () -> Unit, onSave: () -> Unit, onBack: () -> Unit, onRead: () -> Unit, onListen: () -> Unit, onReviews: () -> Unit, onOrder: () -> Unit) {
+private fun BookDetailsScreen(book: Book, saved: Boolean, premiumUnlocked: Boolean, onPremiumRequired: () -> Unit, onSave: () -> Unit, onBack: () -> Unit, onRead: () -> Unit, onListen: () -> Unit, onReviews: () -> Unit, onOrder: () -> Unit, onRecovery: () -> Unit) {
     PageScaffold(onBack, "Book details", action = { IconButton(onClick = onSave) { Icon(if (saved) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, if (saved) "Remove saved book" else "Save book", tint = PagesColors.Forest) } }) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             BookCover(book, Modifier.size(width = PagesSizes.BookDetailCoverWidth, height = PagesSizes.BookDetailCoverHeight))
@@ -453,6 +516,7 @@ private fun BookDetailsScreen(book: Book, saved: Boolean, premiumUnlocked: Boole
                 EmptyState(Icons.Filled.Inventory2, "No editions available", "This title is listed, but no readable or physical edition is available right now.")
             }
         }
+        TextButton(onClick = onRecovery, modifier = Modifier.align(Alignment.CenterHorizontally)) { AppText("Trouble opening this book?", color = PagesColors.Forest) }
         Spacer(Modifier.height(PagesSpacing.SectionGap)); SectionTitle("Reader reviews", "Read all", onClick = onReviews)
         AppText("“A lovely story my child asks for every night.”", color = PagesColors.Muted)
     }
@@ -648,30 +712,59 @@ private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (
 
 @Composable
 private fun CommunityScreen(posts: List<CommunityEntry>, onGroup: () -> Unit, onCreate: () -> Unit) {
+    val feedCategories = listOf("For you", "Discussions", "Tips", "Activities")
+    var selectedFeed by remember { mutableStateOf(feedCategories.first()) }
+    val examplePosts = listOf(
+        CommunityEntry("We finished The Brave Little Fox last night. My little one wanted to talk about courage at breakfast! 🦊", category = "Tips", author = "Sarah Mitchell", time = "2 days ago"),
+        CommunityEntry("Looking for gentle Bangla stories for a 5-year-old. What are your family favourites?", category = "Discussions", author = "Amina Rahman", time = "Yesterday"),
+        CommunityEntry("Our library hosted a lovely family story hour this weekend.", category = "Activities", author = "James Carter", time = "3 days ago")
+    )
+    val feedPosts = (posts + examplePosts).filter { selectedFeed == "For you" || it.category == selectedFeed }
     MainPage(title = "Parent community", subtitle = "A kind space to share the reading journey.", action = { IconButton(onClick = onCreate) { Icon(Icons.Filled.Add, "Create post", tint = PagesColors.Forest) } }) {
         CardSurface(Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onCreate), color = PagesColors.Sage) { Row(verticalAlignment = Alignment.CenterVertically) { Avatar("E"); AppText(" Share a thought with parents…", color = PagesColors.Muted, modifier = Modifier.weight(1f).padding(horizontal = PagesSpacing.ControlGap)); Icon(Icons.Filled.AddPhotoAlternate, null, tint = PagesColors.Forest) } }
-        Spacer(Modifier.height(PagesSpacing.Medium)); ChipRow(listOf("For you", "Discussions", "Tips", "Activities"))
+        Spacer(Modifier.height(PagesSpacing.Medium)); ChipRow(feedCategories, selectedIndex = feedCategories.indexOf(selectedFeed), onSelect = { selectedFeed = feedCategories[it] })
         Spacer(Modifier.height(PagesSpacing.CardContent)); SectionTitle("Groups to explore", "See all", onClick = onGroup)
         Row(horizontalArrangement = Arrangement.spacedBy(PagesSpacing.ControlGap)) { GroupTile("Raising Kind Kids", "312 parents", "🌱", onGroup); GroupTile("Bedtime Stories", "186 parents", "🌙", onGroup) }
         Spacer(Modifier.height(PagesSpacing.SectionGap)); SectionTitle("Recent posts")
-        posts.forEach { post -> CommunityPost("You", "Just now · preview only", post.body, if (post.hasPhoto) "🖼️" else "", onGroup) }
-        CommunityPost("Sarah Mitchell", "2 days ago", "We finished The Brave Little Fox last night. My little one wanted to talk about courage at breakfast! 🦊", "📚", onGroup)
-        CommunityPost("Amina Rahman", "Yesterday", "Looking for gentle Bangla stories for a 5-year-old. What are your family favourites?", "🌼", onGroup)
+        if (feedPosts.isEmpty()) EmptyState(Icons.Filled.Forum, "No posts in this feed yet", "Choose another topic or start a conversation.", "Create a post", onCreate)
+        feedPosts.forEach { post -> CommunityPost(post.author, post.time + if (post.author == "You") " · preview only" else "", post.body, if (post.hasPhoto) "🖼️" else "", onGroup, imageUri = post.imageUri) }
     }
 }
 
 @Composable
-private fun GroupScreen(onBack: () -> Unit, onCreatePost: () -> Unit) {
+private fun GroupScreen(posts: List<CommunityEntry>, onBack: () -> Unit, onCreatePost: () -> Unit) {
     var reply by remember { mutableStateOf("") }
+    var selectedTab by remember { mutableStateOf("Discussion") }
     val replies = remember { mutableStateListOf<String>() }
-    PageScaffold(onBack, "Raising Kind Kids", action = { IconButton(onClick = onCreatePost) { Icon(Icons.Filled.MoreVert, "Group options") } }) {
-        CardSurface(Modifier.fillMaxWidth(), color = PagesColors.Sage) { Column { AppText("🌱  Raising Kind Kids", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); AppText("312 parents · Stories and ideas for caring families", color = PagesColors.Muted, modifier = Modifier.padding(top = PagesSpacing.ExtraSmall)); AppText("Joined", color = PagesColors.Forest, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.End).padding(top = PagesSpacing.Small)) } }
-        ChipRow(listOf("Discussion", "Resources", "Members")); SectionTitle("Latest discussion")
-        CommunityPost("Priya Sharma", "3 days ago", "How do you talk to your kids about kindness when it’s hard? We read books that show different perspectives and then chat at bedtime.", "", null)
-        CommunityPost("James Carter", "2 days ago", "We use the ‘kind choices’ language after reading together. It gives our son a simple way to reflect.", "", null)
-        replies.forEach { message -> CommunityPost("You", "Just now", message, "", null) }
-        OutlineButton("Start a discussion", Icons.Filled.Edit, onCreatePost)
-        OutlinedTextField(value = reply, onValueChange = { reply = it }, placeholder = { AppText("Write a reply…") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Tag), trailingIcon = { IconButton(onClick = { if (reply.isNotBlank()) { replies.add(reply.trim()); reply = "" } }, enabled = reply.isNotBlank()) { Icon(Icons.AutoMirrored.Filled.Send, "Send reply", tint = PagesColors.Forest) } })
+    PageScaffold(onBack, "Raising Kind Kids", action = { IconButton(onClick = onCreatePost) { Icon(Icons.Filled.Add, "Create discussion") } }) {
+        var joined by remember { mutableStateOf(true) }
+        CardSurface(Modifier.fillMaxWidth(), color = PagesColors.Sage) { Column { AppText("🌱  Raising Kind Kids", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); AppText("312 parents · Stories and ideas for caring families", color = PagesColors.Muted, modifier = Modifier.padding(top = PagesSpacing.ExtraSmall)); TextButton(onClick = { joined = !joined }, modifier = Modifier.align(Alignment.End)) { AppText(if (joined) "Joined · Leave group" else "Join group", color = PagesColors.Forest, fontWeight = FontWeight.SemiBold) } } }
+        val tabs = listOf("Discussion", "Resources", "Members")
+        ChipRow(tabs, selectedIndex = tabs.indexOf(selectedTab), onSelect = { selectedTab = tabs[it] })
+        when (selectedTab) {
+            "Discussion" -> {
+                if (!joined) {
+                    EmptyState(Icons.Filled.Groups, "Join the conversation", "Join this group to read discussions and share replies.", "Join group", { joined = true })
+                } else {
+                    SectionTitle("Latest discussion")
+                    CommunityPost("Priya Sharma", "3 days ago", "How do you talk to your kids about kindness when it’s hard? We read books that show different perspectives and then chat at bedtime.", "", null)
+                    CommunityPost("James Carter", "2 days ago", "We use the ‘kind choices’ language after reading together. It gives our son a simple way to reflect.", "", null)
+                    posts.forEach { post -> CommunityPost(post.author, post.time + " · preview only", post.body, if (post.hasPhoto) "🖼️" else "", null, imageUri = post.imageUri) }
+                    replies.forEach { message -> CommunityPost("You", "Just now", message, "", null) }
+                    OutlineButton("Start a discussion", Icons.Filled.Edit, onCreatePost)
+                    OutlinedTextField(value = reply, onValueChange = { reply = it }, placeholder = { AppText("Write a reply…") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Tag), trailingIcon = { IconButton(onClick = { if (reply.isNotBlank()) { replies.add(reply.trim()); reply = "" } }, enabled = reply.isNotBlank()) { Icon(Icons.AutoMirrored.Filled.Send, "Send reply", tint = PagesColors.Forest) } })
+                }
+            }
+            "Resources" -> {
+                SectionTitle("Family resources")
+                CardSurface(Modifier.fillMaxWidth()) { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.AutoStories, null, tint = PagesColors.Forest); Column(Modifier.padding(start = PagesSpacing.Compact)) { AppText("Talking about kindness", fontWeight = FontWeight.SemiBold); AppText("A short family conversation guide", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) } } }
+                CardSurface(Modifier.fillMaxWidth()) { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.Bookmark, null, tint = PagesColors.Forest); Column(Modifier.padding(start = PagesSpacing.Compact)) { AppText("Bedtime reading routine", fontWeight = FontWeight.SemiBold); AppText("Ideas shared by group parents", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) } } }
+            }
+            else -> {
+                SectionTitle("Group members")
+                listOf("Priya Sharma", "James Carter", "Elena Park", "Amina Rahman").forEach { member -> CardSurface(Modifier.fillMaxWidth()) { Row(verticalAlignment = Alignment.CenterVertically) { Avatar(member.first().toString()); AppText(member, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = PagesSpacing.Compact)) } } }
+            }
+        }
     }
 }
 
@@ -679,13 +772,17 @@ private fun GroupScreen(onBack: () -> Unit, onCreatePost: () -> Unit) {
 private fun CreatePostScreen(onBack: () -> Unit, onPost: (CommunityEntry) -> Unit) {
     var post by remember { mutableStateOf("") }
     var selectedPhoto by remember { mutableStateOf<android.net.Uri?>(null) }
+    var selectedCategory by remember { mutableStateOf("Stories") }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { selectedPhoto = it }
-    PageScaffold(onBack, "Create a post", action = { TextButton(onClick = { if (post.isNotBlank()) onPost(CommunityEntry(post.trim(), selectedPhoto != null)) }, enabled = post.isNotBlank()) { AppText("Post", color = PagesColors.Forest, fontWeight = FontWeight.Bold) } }) {
+    PageScaffold(onBack, "Create a post", action = { TextButton(onClick = { if (post.isNotBlank()) onPost(CommunityEntry(post.trim(), selectedPhoto, selectedCategory)) }, enabled = post.isNotBlank()) { AppText("Post", color = PagesColors.Forest, fontWeight = FontWeight.Bold) } }) {
         CardSurface(Modifier.fillMaxWidth()) { Row(verticalAlignment = Alignment.CenterVertically) { Avatar("E"); Column(Modifier.padding(start = PagesSpacing.Compact)) { AppText("Emma’s parent", fontWeight = FontWeight.SemiBold); AppText("Posting as a parent", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) } } }
         OutlinedTextField(value = post, onValueChange = { post = it }, placeholder = { AppText("What would you like to share?") }, modifier = Modifier.fillMaxWidth().height(PagesSizes.PostInputHeight), shape = RoundedCornerShape(PagesShapes.Card))
+        SectionTitle("Choose a topic")
+        val categories = listOf("Stories", "Discussions", "Tips", "Activities")
+        ChipRow(categories, selectedIndex = categories.indexOf(selectedCategory), onSelect = { selectedCategory = categories[it] })
         CardSurface(Modifier.fillMaxWidth().clickable(role = Role.Button) { photoPicker.launch("image/*") }, color = PagesColors.Sky) { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.AddPhotoAlternate, null, tint = PagesColors.Forest); Column(Modifier.weight(1f).padding(horizontal = PagesSpacing.ControlGap)) { AppText(if (selectedPhoto == null) "Add a family-friendly photo" else "Photo selected", fontWeight = FontWeight.SemiBold); if (selectedPhoto != null) AppText("Attached to this local preview", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }; Icon(Icons.Filled.ChevronRight, null) } }
         AppText("Please keep children’s personal details private. Posts are visible to community members.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
-        PrimaryButton("Preview post", Icons.AutoMirrored.Filled.Send) { if (post.isNotBlank()) onPost(CommunityEntry(post.trim(), selectedPhoto != null)) }
+        PrimaryButton("Preview post", Icons.AutoMirrored.Filled.Send) { if (post.isNotBlank()) onPost(CommunityEntry(post.trim(), selectedPhoto, selectedCategory)) }
         AppText("Posts are only kept for this app session until the community service is configured.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
     }
 }
@@ -716,17 +813,34 @@ private fun ReviewsScreen(book: Book, onBack: () -> Unit) {
 }
 
 @Composable
-private fun OfflineScreen(onBack: () -> Unit, onBrowse: () -> Unit) {
+private fun OfflineScreen(books: List<Book>, onBack: () -> Unit, onBrowse: () -> Unit, onRemove: (Book) -> Unit, onRetrySync: () -> Unit) {
+    var bookToRemove by remember { mutableStateOf<Book?>(null) }
     PageScaffold(onBack, "Available offline") {
-        EmptyState(Icons.Filled.CloudOff, stringResource(R.string.no_offline_books), "Offline book storage will appear here after authorized book access and private storage are connected.", stringResource(R.string.browse_books), onBrowse)
-        AppText("No book files are stored on this device by the current preview.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = PagesSpacing.Compact))
+        CardSurface(Modifier.fillMaxWidth(), color = PagesColors.Sage) {
+            AppText("Storage and sync preview", fontWeight = FontWeight.Bold)
+            AppText("These are sample list entries only. No book files are stored on this device, and real storage usage is not available yet.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
+            AppText("Sync status · Not connected", color = PagesColors.Forest, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = PagesSpacing.Small))
+            TextButton(onClick = onRetrySync, contentPadding = PaddingValues(horizontal = PagesSpacing.Small)) { AppText("Retry sync", color = PagesColors.Forest) }
+        }
+        SectionTitle("Offline book list")
+        if (books.isEmpty()) EmptyState(Icons.Filled.CloudOff, stringResource(R.string.no_offline_books), "Books you save for offline reading will appear here after private encrypted storage is connected.", stringResource(R.string.browse_books), onBrowse)
+        books.forEach { book ->
+            CardSurface(Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    BookCover(book, Modifier.size(PagesSizes.BookListCover))
+                    Column(Modifier.weight(1f).padding(horizontal = PagesSpacing.Compact)) { AppText(book.title, fontWeight = FontWeight.Bold); AppText("Preview entry · file not stored", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }
+                    IconButton(onClick = { bookToRemove = book }) { Icon(Icons.Filled.DeleteOutline, "Remove ${book.title} from preview list", tint = PagesColors.Forest) }
+                }
+            }
+        }
     }
+    bookToRemove?.let { book -> AlertDialog(onDismissRequest = { bookToRemove = null }, title = { AppText("Remove this book?") }, text = { AppText("${book.title} will be removed from the sample list. No stored book file will be deleted.") }, confirmButton = { TextButton(onClick = { onRemove(book); bookToRemove = null }) { AppText("Remove") } }, dismissButton = { TextButton(onClick = { bookToRemove = null }) { AppText("Cancel") } }) }
 }
 
 @Composable
-private fun ParentScreen(guest: Boolean, language: String, child: ChildProfile?, onLanguage: (String) -> Unit, onProfiles: () -> Unit, onSubscription: () -> Unit, onOrders: () -> Unit, onSupport: () -> Unit, onOffline: () -> Unit, onUnavailable: (String) -> Unit, onCreateAccount: () -> Unit) {
+private fun ParentScreen(guest: Boolean, previewAccount: Boolean, parentName: String, parentEmail: String, language: String, child: ChildProfile?, onLanguage: (String) -> Unit, onProfiles: () -> Unit, onSubscription: () -> Unit, onOrders: () -> Unit, onSupport: () -> Unit, onOffline: () -> Unit, onPrivacy: () -> Unit, onUnavailable: (String) -> Unit, onCreateAccount: () -> Unit) {
     MainPage(title = stringResource(R.string.parent_account), subtitle = "Manage your family’s LittlePages.") {
-        CardSurface(Modifier.fillMaxWidth(), color = PagesColors.Sage) { Row(verticalAlignment = Alignment.CenterVertically) { Avatar(if (guest) "G" else "E"); Column(Modifier.padding(start = PagesSpacing.Compact)) { AppText(if (guest) "Guest access" else "Emma’s parent", fontWeight = FontWeight.Bold); AppText(if (guest) "Browsing without an account" else "emma@example.com", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) } } }
+        CardSurface(Modifier.fillMaxWidth(), color = PagesColors.Sage) { Row(verticalAlignment = Alignment.CenterVertically) { Avatar(if (guest) "G" else (parentName.firstOrNull()?.uppercase() ?: "P")); Column(Modifier.padding(start = PagesSpacing.Compact)) { AppText(if (guest) "Guest access" else if (previewAccount) parentName.ifBlank { "Parent preview" } else "Parent account", fontWeight = FontWeight.Bold); AppText(if (guest) "Browsing without an account" else if (previewAccount) "${parentEmail.ifBlank { "Sample profile" }} · preview only" else "Account session unavailable in preview", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) } } }
         if (guest) {
             AppText("Create an account to save your reading progress across devices, order books, and join the parent community.", color = PagesColors.Muted)
             PrimaryButton("Create a parent account", Icons.Filled.AccountCircle, onCreateAccount)
@@ -744,13 +858,13 @@ private fun ParentScreen(guest: Boolean, language: String, child: ChildProfile?,
         }
         SettingsRow(Icons.Filled.SwitchAccount, "Switch parent account", "Return to sign-in options", onCreateAccount)
         SettingsRow(Icons.Filled.SupportAgent, stringResource(R.string.support_label), "We’re here to help", onSupport)
-        if (!guest) SettingsRow(Icons.Filled.PrivacyTip, "Privacy and safety", "Family controls", { onUnavailable("Privacy and consent controls will be added after the parent-data policy is approved.") })
+        SettingsRow(Icons.Filled.PrivacyTip, "Privacy and safety", "Family controls and data choices", onPrivacy)
         SettingsRow(Icons.AutoMirrored.Filled.Logout, if (guest) "Exit guest mode" else "Sign out", "", { onUnavailable(if (guest) "" else "There is no signed-in account in preview mode.") })
     }
 }
 
 @Composable
-private fun ProfilesScreen(children: List<ChildProfile>, onBack: () -> Unit, onSaveChild: (ChildProfile?, ChildProfile) -> Unit) {
+private fun ProfilesScreen(children: List<ChildProfile>, selectedChildId: String, progressStore: ReaderProgressStore, onSelectChild: (String) -> Unit, onBack: () -> Unit, onSaveChild: (ChildProfile?, ChildProfile) -> Unit) {
     var editing by remember { mutableStateOf<ChildProfile?>(null) }
     var adding by remember { mutableStateOf(false) }
     var nickname by remember { mutableStateOf("") }
@@ -758,29 +872,80 @@ private fun ProfilesScreen(children: List<ChildProfile>, onBack: () -> Unit, onS
     var submitted by remember { mutableStateOf(false) }
     PageScaffold(onBack, "Child profiles") {
         AppText("Preview profiles are held in memory only; account sync and consent settings are not configured.", color = PagesColors.Muted)
-        children.forEach { child -> CardSurface(Modifier.fillMaxWidth().clickable(role = Role.Button) { editing = child; nickname = child.nickname; ageBand = child.ageBand; submitted = false }) { Row(verticalAlignment = Alignment.CenterVertically) { Avatar(child.nickname.take(1).ifBlank { "?" }); Column(Modifier.weight(1f).padding(start = PagesSpacing.Compact)) { AppText(child.nickname, fontWeight = FontWeight.Bold); AppText("${child.ageBand} · English and বাংলা", color = PagesColors.Muted) }; Icon(Icons.Filled.Edit, "Edit profile", tint = PagesColors.Forest) } } }
+        children.forEach { child ->
+            val startedBooks = books.count { progressStore.page(child.id, it.title) > 1 }
+            val lastReadPage = progressStore.page(child.id, books.first().title).coerceIn(1, 24)
+            CardSurface(Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = selectedChildId == child.id, onClick = { onSelectChild(child.id) })
+                    Avatar(child.nickname.take(1).ifBlank { "?" })
+                    Column(Modifier.weight(1f).padding(start = PagesSpacing.Compact)) {
+                        AppText(child.nickname, fontWeight = FontWeight.Bold)
+                        AppText("${child.ageBand} · English and বাংলা", color = PagesColors.Muted)
+                        AppText("$startedBooks stories started · Brave Little Fox page $lastReadPage of 24", color = PagesColors.Forest, style = MaterialTheme.typography.bodySmall)
+                    }
+                    IconButton(onClick = { editing = child; nickname = child.nickname; ageBand = child.ageBand; submitted = false }) { Icon(Icons.Filled.Edit, "Edit ${child.nickname} profile", tint = PagesColors.Forest) }
+                }
+                TextButton(onClick = { onSelectChild(child.id) }, modifier = Modifier.align(Alignment.End)) { AppText(if (selectedChildId == child.id) "Selected for reading" else "Use this profile", color = PagesColors.Forest) }
+            }
+        }
         OutlineButton("Add a child profile", Icons.Filled.Add) { adding = true; editing = null; nickname = ""; ageBand = "5 years old"; submitted = false }
         AppText("Parent account controls purchases, subscriptions, and community posts.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
     }
-    if (adding || editing != null) AlertDialog(onDismissRequest = { adding = false; editing = null }, title = { AppText(if (adding) "Add child profile" else "Edit child profile") }, text = { Column { OutlinedTextField(nickname, { nickname = it.take(30) }, label = { AppText("Nickname") }, singleLine = true, isError = submitted && nickname.isBlank()); AppText("Age range", modifier = Modifier.padding(top = PagesSpacing.Compact, bottom = PagesSpacing.Dense)); Row(horizontalArrangement = Arrangement.spacedBy(PagesSpacing.ExtraSmall)) { listOf("3 years old", "5 years old", "7 years old").forEach { choice -> FilterChip(selected = ageBand == choice, onClick = { ageBand = choice }, label = { AppText(choice.substringBefore(' ')) }) } }; AppText("Years", color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall) } }, confirmButton = { TextButton(onClick = { submitted = true; if (nickname.isNotBlank()) { onSaveChild(editing, ChildProfile(nickname.trim(), ageBand)); adding = false; editing = null } }) { AppText("Save preview") } }, dismissButton = { TextButton(onClick = { adding = false; editing = null }) { AppText("Cancel") } })
+    if (adding || editing != null) AlertDialog(onDismissRequest = { adding = false; editing = null }, title = { AppText(if (adding) "Add child profile" else "Edit child profile") }, text = { Column { OutlinedTextField(nickname, { nickname = it.take(30) }, label = { AppText("Nickname") }, singleLine = true, isError = submitted && nickname.isBlank()); AppText("Age range", modifier = Modifier.padding(top = PagesSpacing.Compact, bottom = PagesSpacing.Dense)); Row(horizontalArrangement = Arrangement.spacedBy(PagesSpacing.ExtraSmall)) { listOf("3 years old", "5 years old", "7 years old").forEach { choice -> FilterChip(selected = ageBand == choice, onClick = { ageBand = choice }, label = { AppText(choice.substringBefore(' ')) }) } }; AppText("Years", color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall) } }, confirmButton = { TextButton(onClick = { submitted = true; if (nickname.isNotBlank()) { val stableId = editing?.id ?: "child-${System.currentTimeMillis()}"; onSaveChild(editing, ChildProfile(nickname.trim(), ageBand, stableId)); adding = false; editing = null } }) { AppText("Save preview") } }, dismissButton = { TextButton(onClick = { adding = false; editing = null }) { AppText("Cancel") } })
 }
 
 @Composable
-private fun SubscriptionScreen(premium: Boolean, onBack: () -> Unit, onSubscribe: () -> Unit, onPreview: () -> Unit) {
+private fun PrivacyScreen(onBack: () -> Unit) {
+    var selectedAction by remember { mutableStateOf<String?>(null) }
+    PageScaffold(onBack, "Privacy and safety") {
+        EmptyState(Icons.Filled.FamilyRestroom, "Parents stay in control", "This prototype keeps child profiles and community activity in local preview state. Account sync, consent records, and deletion requests are not connected.")
+        SectionTitle("Family data")
+        SettingsRow(Icons.Filled.ChildCare, "Child profiles", "Nickname, age band, and reading progress", { selectedAction = "Child profiles" })
+        SettingsRow(Icons.Filled.Groups, "Community activity", "Posts and replies are preview-only", { selectedAction = "Community activity" })
+        SettingsRow(Icons.Filled.Book, "Reading history", "Book position and bookmarks on this device", { selectedAction = "Reading history" })
+        SectionTitle("Parent choices")
+        OutlineButton("Review parent consent", Icons.Filled.VerifiedUser) { selectedAction = "Parent consent" }
+        OutlineButton("Request a copy of family data", Icons.Filled.FileDownload) { selectedAction = "Data copy" }
+        OutlineButton("Request account deletion", Icons.Filled.DeleteForever) { selectedAction = "Account deletion" }
+        AppText("Final privacy wording, retention periods, and consent requirements need approval before launch.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
+    }
+    selectedAction?.let { action -> AlertDialog(onDismissRequest = { selectedAction = null }, title = { AppText(action) }, text = { AppText("This preview does not send or store privacy requests. The account and consent service is not configured.") }, confirmButton = { TextButton(onClick = { selectedAction = null }) { AppText("Got it") } }) }
+}
+
+@Composable
+private fun SubscriptionScreen(premium: Boolean, onBack: () -> Unit, onSubscribe: () -> Unit, onPreview: () -> Unit, onPaymentRecovery: () -> Unit) {
+    val statuses = listOf("Not subscribed", "Active", "Renewing", "Cancelled", "Expired", "Payment issue")
+    var previewStatus by remember { mutableStateOf(if (premium) "Active" else "Not subscribed") }
     PageScaffold(onBack, "LittlePages Premium") {
         Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(PagesShapes.Hero)).background(Brush.linearGradient(listOf(PagesColors.Sage, PagesColors.Peach))).padding(PagesSpacing.Large)) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) { AppText("✨", fontSize = 40.sp); AppText("Stories come alive", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center); AppText("A little extra magic for family reading time.", textAlign = TextAlign.Center, color = PagesColors.Muted, modifier = Modifier.padding(top = PagesSpacing.Small)) }
         }
         listOf("Word-by-word narrated read-along", "Warm voices and adjustable speed", "More stories for your family", "Offline listening on supported books").forEach { BenefitRow(it) }
-        CardSurface(Modifier.fillMaxWidth()) { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { AppText("Family plan", fontWeight = FontWeight.Bold); AppText("Billed monthly · cancel anytime", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }; AppText("৳399 / mo", fontWeight = FontWeight.Bold, color = PagesColors.Forest) } }
-        PrimaryButton(if (premium) "Premium is active" else "Start Premium", Icons.Filled.Star, onSubscribe)
+        CardSurface(Modifier.fillMaxWidth()) { Row(verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { AppText("Family plan", fontWeight = FontWeight.Bold); AppText("Sample billing terms · not final", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }; AppText("৳399 / mo · preview", fontWeight = FontWeight.Bold, color = PagesColors.Forest) } }
+        SectionTitle("Subscription state preview")
+        AppText("Choose a sample state to review the interface. This does not change a subscription or payment.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
+        ChipRow(statuses, selectedIndex = statuses.indexOf(previewStatus), onSelect = { previewStatus = statuses[it] })
+        CardSurface(Modifier.fillMaxWidth(), color = PagesColors.Sage) {
+            AppText(previewStatus, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+            AppText(when (previewStatus) {
+                "Active" -> "Premium is active in this sample view. Renewal date and receipts will come from verified billing."
+                "Renewing" -> "A renewal is pending in this sample view. No charge or renewal was attempted."
+                "Cancelled" -> "Cancellation is shown as a sample state. Entitlement end date needs verified billing data."
+                "Expired" -> "Premium access is expired in this sample view. Real access is controlled by verified entitlements."
+                "Payment issue" -> "A sample payment problem needs attention. No payment was attempted."
+                else -> "No subscription is active in this sample view."
+            }, color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
+        }
+        PrimaryButton(if (premium || previewStatus == "Active") "Manage Premium · preview" else "Start Premium", Icons.Filled.Star, onSubscribe)
+        if (previewStatus == "Payment issue") OutlineButton("Open payment recovery", Icons.Filled.Payment, onPaymentRecovery)
         OutlineButton("Try a one-page read-along sample", Icons.Filled.Headphones, onPreview)
-        AppText("Subscriptions are managed securely through the available payment option.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+        AppText("Billing, renewal, cancellation, and entitlements are not connected in this prototype.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
     }
 }
 
 @Composable
-private fun CheckoutScreen(book: Book, onBack: () -> Unit, onComplete: () -> Unit) {
+private fun CheckoutScreen(book: Book, onBack: () -> Unit, onComplete: (format: String, method: String, name: String, address: String, phone: String) -> Unit, onPaymentRecovery: () -> Unit) {
     var format by remember(book.title) { mutableStateOf(if (book.pdfAvailable) "PDF · Read in app" else "Printed book") }
     var paymentMethod by remember { mutableStateOf("bKash") }
     var fullName by remember { mutableStateOf("") }
@@ -800,15 +965,57 @@ private fun CheckoutScreen(book: Book, onBack: () -> Unit, onComplete: () -> Uni
         }
         SectionTitle("Payment")
         Row(horizontalArrangement = Arrangement.spacedBy(PagesSpacing.Small)) { listOf("bKash", "Visa").forEach { method -> FilterChip(selected = paymentMethod == method, onClick = { paymentMethod = method }, label = { AppText(method) }) } }
-        PrimaryButton("Continue to payment", Icons.Filled.Lock) { submitted = true; if (validAddress) onComplete() }
-        AppText("Selected: $paymentMethod. Payment is not connected yet. PDFs are for in-app reading only.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+        PrimaryButton("Place preview order", Icons.Filled.Lock) { submitted = true; if (validAddress) onComplete(format, paymentMethod, fullName.trim(), address.trim(), phone) }
+        AppText("Preview only: no payment is taken and no order is sent. PDFs remain in-app only.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+        TextButton(onClick = onPaymentRecovery, modifier = Modifier.align(Alignment.CenterHorizontally)) { AppText("Preview payment recovery", color = PagesColors.Forest) }
     }
 }
 
 @Composable
-private fun OrdersScreen(onBack: () -> Unit) {
+private fun OrderConfirmationScreen(order: PurchasePreview?, onViewOrders: () -> Unit, onContinueReading: () -> Unit) {
+    PageScaffold(onBack = onContinueReading, title = "Order preview") {
+        EmptyState(Icons.Filled.CheckCircle, "Preview order created", "This is a local confirmation only. No payment was taken and no order was sent to a store.")
+        order?.let {
+            CardSurface(Modifier.fillMaxWidth()) {
+                AppText(it.bookTitle, fontWeight = FontWeight.Bold)
+                AppText("${it.format} · ${it.paymentMethod}", color = PagesColors.Muted)
+                AppText("Reference ${it.id}", color = PagesColors.Forest, style = MaterialTheme.typography.bodySmall)
+                if (it.format == "Printed book" && it.address.isNotBlank()) AppText("Delivery to ${it.fullName}: ${it.address} · ${it.phone}", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        PrimaryButton("View order history", Icons.AutoMirrored.Filled.ReceiptLong, onViewOrders)
+    }
+}
+
+@Composable
+private fun OrdersScreen(orders: List<PurchasePreview>, onBack: () -> Unit) {
     PageScaffold(onBack, "Your orders") {
-        EmptyState(Icons.AutoMirrored.Filled.ReceiptLong, "Order history is empty", "Completed orders will appear here after secure checkout is connected.")
+        if (orders.isEmpty()) EmptyState(Icons.AutoMirrored.Filled.ReceiptLong, "Order history is empty", "Preview orders will appear here after you complete the sample checkout.")
+        orders.forEach { order ->
+            CardSurface(Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.AutoMirrored.Filled.ReceiptLong, null, tint = PagesColors.Forest)
+                    Column(Modifier.weight(1f).padding(start = PagesSpacing.Compact)) {
+                        AppText(order.bookTitle, fontWeight = FontWeight.Bold)
+                        AppText("${order.format} · ${order.paymentMethod}", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
+                        AppText("Preview only · no charge or fulfillment", color = PagesColors.Forest, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ServiceRecoveryScreen(type: String, onBack: () -> Unit, onRetry: () -> Unit) {
+    val (title, message) = when (type) {
+        "payment" -> "Payment needs attention" to "The payment provider is not connected. No charge was made and your order was not created."
+        "offline" -> "Offline sync is unavailable" to "Private book storage and sync are not configured. No book file or reading progress was changed."
+        else -> "Book access is unavailable" to "The book access service is not connected. Your saved reading position and bookmarks are unchanged."
+    }
+    PageScaffold(onBack, "Try again") {
+        RemoteErrorState(title, message, onRetry)
+        AppText("If this continues, contact support from Parent Profile.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = PagesSpacing.Medium))
     }
 }
 
