@@ -86,6 +86,39 @@ data class ManagedStorePage(
     val blocks: List<ManagedPageBlock> = emptyList()
 )
 
+data class LocalizedCopy(val english: String, val bangla: String)
+
+enum class ProductAvailability { IN_STOCK, OUT_OF_STOCK, PREORDER, NOT_APPLICABLE }
+
+sealed interface ProductAttributeValue {
+    data class Text(val value: String) : ProductAttributeValue
+    data class NumberValue(val value: Double) : ProductAttributeValue
+    data class BooleanValue(val value: Boolean) : ProductAttributeValue
+    data class TextList(val values: List<String>) : ProductAttributeValue
+}
+
+data class ManagedProductVariant(
+    val id: String,
+    val label: LocalizedCopy,
+    val priceMinor: Long,
+    val currency: String = "BDT",
+    val availability: ProductAvailability,
+    val stockQuantity: Int? = null
+)
+
+/** Shared sellable item data. Reader assets and entitlements stay in the book-specific model. */
+data class ManagedProduct(
+    val id: String,
+    val productTypeId: String,
+    val title: LocalizedCopy,
+    val description: LocalizedCopy,
+    val categoryIds: List<String>,
+    val imageAssetIds: List<String>,
+    val variants: List<ManagedProductVariant>,
+    val attributes: Map<String, ProductAttributeValue> = emptyMap(),
+    val published: Boolean = true
+)
+
 /** Shared storefront view of configuration, retained as a type alias for existing catalogue UI. */
 typealias StorefrontConfiguration = CatalogConfiguration
 

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://littlepages.example/contracts/publication-manifest/v1.json",
+  "title": "LittlePages published content manifest",
+  "description": "Small pointer document shared by Android, iOS, web, and admin preview to discover a consistent published content revision.",
+  "type": "object",
+  "required": ["schemaVersion", "publicationRevision", "configurationRevision", "catalogRevision", "publishedAt", "supportedLocales", "contentHash"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "publicationRevision": { "type": "integer", "minimum": 1 },
+    "configurationRevision": { "type": "integer", "minimum": 1 },
+    "catalogRevision": { "type": "integer", "minimum": 1 },
+    "publishedAt": { "type": "string", "format": "date-time" },
+    "publishedBy": { "type": "string", "minLength": 1 },
+    "supportedLocales": { "type": "array", "items": { "enum": ["en", "bn"] }, "minItems": 1, "uniqueItems": true },
+    "contentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "minimumClientVersions": {
+      "type": "object",
+      "properties": {
+        "android": { "type": "string", "maxLength": 32 },
+        "ios": { "type": "string", "maxLength": 32 },
+        "web": { "type": "string", "maxLength": 32 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

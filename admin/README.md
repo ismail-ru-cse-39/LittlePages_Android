@@ -10,4 +10,4 @@ python3 -m http.server 8000
 
 Open `http://localhost:8000/admin/`. Storefront/category/page edits and block ordering can be saved to this browser's local storage.
 
-This prototype has no staff authentication, Firebase connection, server validation, audit log, or live publish operation. The review button only saves a local draft. Do not use it to manage production data. Those protections and the publishing service are tracked in `TASKS.md`.
+This prototype has no staff authentication, Firebase connection, server validation, audit log, or live publish operation. The review dialog checks local references, then lets you save a local draft or export the draft JSON. Do not use it to manage production data. Those protections and the publishing service are tracked in `TASKS.md`.

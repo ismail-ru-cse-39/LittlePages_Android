@@ -53,7 +53,7 @@
     <section id="products" class="panel product-type-panel"><div class="panel-heading compact"><div><span class="eyebrow">SUPPORTED PRODUCT TYPES</span><h2>Product types</h2><p>Admins can create storefronts from these supported templates. New behavior needs an app/backend update.</p></div></div><div id="productTypeList" class="type-list"></div></section>
     <footer>LittlePages Studio <span>·</span> Configuration editor preview</footer>
   </main>
-  <dialog id="publishDialog"><div class="dialog-icon">✦</div><h2>Ready to review?</h2><p>This prototype can save a draft in this browser, but cannot publish it to LittlePages. Connect staff authentication and the trusted Firebase publishing service before enabling live changes.</p><div class="dialog-actions"><button id="closeDialogButton" class="button button-soft">Back to editing</button><button id="saveDraftButton" class="button button-primary">Save local draft</button></div></dialog>
+  <dialog id="publishDialog"><div class="dialog-icon">✦</div><h2>Review this draft</h2><p>This local check validates IDs and references for the preview. It cannot validate rights or publish to LittlePages.</p><ul id="validationList" class="validation-list"></ul><div class="dialog-actions"><button id="closeDialogButton" class="button button-soft">Back to editing</button><button id="saveDraftButton" class="button button-soft">Save local draft</button><button id="exportDraftButton" class="button button-primary">Download JSON</button></div></dialog>
   <script src="admin.js"></script>
 </body>
 </html>

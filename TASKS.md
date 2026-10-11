@@ -100,7 +100,11 @@ Resolve these decisions before connecting payments, publishing content, or colle
 - [x] Define shared multi-product contracts for products, product types, storefronts, page templates/blocks, categories, inventory, and product/variant order lines; keep reader access/progress book-specific (`firebase/contracts/storefront.v1.schema.json`, `firebase/contracts/v1.json`).
 - [x] Add versioned storefront/type/category/page fields to the editable configuration schema and provide provisional Books and disabled Toys storefront examples.
 - [x] Define the client-side versioned configuration repository boundary, with schema/revision validation and last-valid-cache fallback; concrete Firestore and durable cache adapters remain pending.
+- [x] Define a cross-platform publication manifest for Android, iOS, web, and admin preview, including pinned configuration/catalogue revisions, locales, content hash, and minimum client versions (`firebase/contracts/publication-manifest.v1.schema.json`).
+- [x] Specify shared draft validation, preview, publish, rollback, cache refresh, and atomic snapshot activation behavior (`firebase/PUBLISHING.md`).
+- [x] Add Android manifest/content snapshot models and a read-only state-flow source so feature screens can observe a complete validated content revision.
 - [ ] Connect the versioned admin-managed storefront configuration and category registry to Firestore, with cached client reads, schema validation, admin-only publishing, revision history, and rollback.
+- [ ] Implement the version-pinned content read API/adapters and client refresh notifications; activate a new publication only after the full snapshot validates.
 - [ ] Add role-based admin access, Firebase App Check, restrictive Firestore/Storage rules, and audit records.
 - [ ] Add monitoring and alerting for backend failures, storage errors, and payment/order processing.
 
@@ -109,10 +113,13 @@ Resolve these decisions before connecting payments, publishing content, or colle
 ## Phase 4 — Multi-product storefront and admin publishing
 
 - [x] Add a static local-only interaction prototype for storefront, category, page, and allowlisted block editing with browser draft persistence (`admin/`); this is not a staff-secured or publishing console.
+- [x] Add local draft validation for IDs/references and JSON export to the admin preview; production validation, approval, and publishing remain pending.
 - [ ] Build the staff-only web admin shell and role management.
+- [ ] Build the customer website storefront using the same manifest, product IDs, configuration revisions, and allowlisted page blocks as Android/iOS; do not maintain a parallel catalogue.
 - [ ] Add an admin settings area for the versioned editable policies in `firebase/config/provisional-defaults.v1.json`, with validation, impact preview, approval status, audit history, and rollback.
 - [x] Define supported declarative product type schema metadata for Books and Toys and allowlisted page block types in the shared contract; template rendering and product attribute editors remain open.
 - [ ] Implement shared product detail templates for Books and Toys; provide common fields plus validated type-specific attributes.
+- [ ] Implement compatible native renderers for the shared product/page contracts on Android, iOS, and web, with cross-platform fixture/contract checks.
 - [ ] Add admin workflows to create, rename, reorder, disable, and archive storefronts/sections, product types, and localized categories; app navigation and filters must derive from published configuration.
 - [ ] Build an admin page composer using an allowlisted shared block set (hero, category rail, product grid/carousel, and editorial content); publish/reorder/preview/archive pages without an Android/iOS/web release.
 - [ ] Add generic product create/edit/archive and draft/publish workflows, with product-specific validation, variants, images, pricing, and stock.
@@ -122,7 +129,7 @@ Resolve these decisions before connecting payments, publishing content, or colle
 - [ ] Manage book Premium/free access and in-app reading, plus product price, variants, stock, physical delivery, and supported order options.
 - [ ] Add preview, edit history, and publishing checks for rights, metadata, file integrity, and narration timing.
 
-**Done when:** an authorized staff member can add a supported product category/store section, configure and publish a page from supported blocks, and publish products without an app release; Android reflects the revision safely. New behavior outside supported schemas/templates is explicitly tracked as app/backend work.
+**Done when:** an authorized staff member can add a supported product category/store section, configure and publish a page from supported blocks, and publish products without an app release; connected Android, iOS, and website clients activate the same revision safely. New behavior outside supported schemas/templates is explicitly tracked as app/backend work.
 
 ## Phase 5 — Reader, narration, and offline access
 
@@ -173,10 +180,10 @@ Resolve these decisions before connecting payments, publishing content, or colle
 
 Keep this section current as work proceeds:
 
-- **Current phase:** Shared product/storefront/page schemas, Android configuration models/repository policy, and a local admin interaction prototype are in place. The Android app still uses local preview data; Firebase adapters and the staff admin console are required for live no-release updates.
-- **Next task:** Configure development Firebase project/app registration, then implement the read-only Firestore adapter and durable last-valid configuration cache. Keep admin publishing server-only.
+- **Current phase:** Shared cross-platform product/storefront/page and publication contracts, Android configuration/product models, repository policy, and a validated local admin interaction prototype are in place. The Android app still uses local preview data; Firebase adapters and the staff admin console are required for live no-release updates.
+- **Next task:** Configure the development Firebase project/app registration, then implement the version-pinned read API/Firestore adapter and durable last-valid cache. Keep admin publishing server-only.
 - **Blockers:** Firebase project IDs/app registrations and provider configuration; final owner/legal approval of provisional policies; content catalogue and distribution rights; physical fulfillment terms; moderation response ownership; applicable digital billing flow. Firebase auth, roles/App Check, Firestore adapters, and the web admin are not connected.
-- **Configuration progress:** Added the shared product/storefront/page schema, provisional Books and disabled Toys storefront definitions, plus Android models for product types, storefronts, and allowlisted blocks. Added a version-aware client repository boundary with validation and cached-revision fallback. The `admin/` prototype can edit storefronts/categories/pages and save a local draft. The preview app is still wired to local data; actual Firestore/cache adapters, staff authentication, server publishing, approvals, and audit history remain pending. Arbitrary new business logic/renderers/payment providers still require implementation work.
+- **Configuration progress:** Added shared product/storefront/page schemas and a cross-platform publication manifest, provisional Books and disabled Toys storefront definitions, plus Android models for products, variants, product types, storefronts, and allowlisted blocks. Documented draft validation, revision-pinned reads, atomic client activation, cache refresh, and rollback. The `admin/` prototype can edit storefronts/categories/pages, validate references, save a local draft, and export JSON. The preview app is still wired to local data; actual Firestore/content API adapters, staff authentication, server publishing, approvals, and audit history remain pending. Arbitrary new business logic/renderers/payment providers still require implementation work.
 - **Completed in this pass:** finished the local auth/onboarding screens, child-specific reading progress, offline list/removal preview, parent feed with local image posts and group discussions, profile/privacy/support surfaces, sample checkout/order history, subscription lifecycle previews, and service recovery flows; previous local browsing/detail/review states, preview account switching, report/block confirmation, and reusable loading/error/retry components remain complete. Added an Android `PdfRenderer` preview backed by a generated sample PDF in the app cache; this is placeholder content, not a customer book. No Firebase, account, storage, payment, moderation, or support request was connected, and no build was run.
 - **Important limit:** local reading data uses a placeholder profile ID and has no cloud sync. Read-along speaks sample text using an installed English Android TTS voice; exact word timing depends on the engine and falls back to estimated highlighting. No licensed book text/audio/timing is connected. Sample catalogue availability is local metadata. Community images are not uploaded. Authentication, payment, real book content, offline content storage, and Firebase services are not connected. Network status is monitored, but data fetching and service-specific retries are not yet implemented.
 - **Decision log (2026-10-11):** English and Bangla are launch languages. PDFs are in-app only for every customer, including Premium. Premium narration/word highlighting is a subscription feature. When a physical edition is available, offer both in-app PDF access and the printed book. Requested Bangladesh payment methods are bKash and Visa. Generic offline, entitlement, privacy, physical-commerce, and community defaults are recorded as editable provisional settings; owner/legal approval and live admin publishing remain open.
@@ -200,6 +207,9 @@ Keep this section current as work proceeds:
 - `ARCHITECTURE.md`: initial boundaries and platform expansion decisions
 - `firebase/SCHEMA.md`: proposed shared backend data contract; no Firebase project is connected
 - `firebase/contracts/v1.json`: machine-readable version 1 Firestore document schemas
+- `firebase/contracts/storefront.v1.schema.json`, `firebase/contracts/publication-manifest.v1.schema.json`: shared commerce/page and publication contracts for all client platforms
+- `firebase/PUBLISHING.md`: shared draft, publish, revision refresh, and rollback behavior
+- `admin/`: static local CMS interaction prototype; no staff authentication or live publishing
 - `firebase/firestore.rules`, `firebase/storage.rules`: deny-all starter rules until reviewed production rules exist
 
 As feature implementation grows, split the prototype into feature packages and extract independent Gradle modules when that separation reduces coupling or makes parallel development easier.

@@ -87,9 +87,10 @@ function bindEvents() {
   });
   byId('pageTitleInput').addEventListener('input', event => { const page = selectedPage(); if (page) page.title.en = event.target.value; });
   byId('addBlockButton').addEventListener('click', addBlock);
-  byId('publishButton').addEventListener('click', () => byId('publishDialog').showModal());
+  byId('publishButton').addEventListener('click', () => { renderValidation(); byId('publishDialog').showModal(); });
   byId('closeDialogButton').addEventListener('click', () => byId('publishDialog').close());
   byId('saveDraftButton').addEventListener('click', () => { localStorage.setItem(STORAGE_KEY, JSON.stringify(config)); byId('publishDialog').close(); render(); });
+  byId('exportDraftButton').addEventListener('click', exportDraft);
   byId('resetButton').addEventListener('click', async () => { localStorage.removeItem(STORAGE_KEY); await loadConfig(); });
 }
 
@@ -169,6 +170,64 @@ function renderProductTypes() {
     const card = document.createElement('div'); card.className = 'type-card'; card.append(text('span', type.renderer === 'book_v1' ? '▤' : '◇', 'store-icon'));
     const details = text('div', type.label.en); details.className = 'store-name'; details.append(text('small', `${type.renderer} · supported template`)); card.append(details); list.append(card);
   });
+}
+
+function validateDraft() {
+  const errors = [];
+  const unique = (items, label) => {
+    const ids = items.map(item => item.id);
+    if (new Set(ids).size !== ids.length) errors.push(`${label} IDs must be unique.`);
+  };
+  const validId = id => /^[a-z0-9_-]{2,60}$/.test(id ?? '');
+  const localized = (value, label) => {
+    if (!value?.en?.trim() || !value?.bn?.trim()) errors.push(`${label} needs English and Bangla labels.`);
+  };
+  const types = config.catalog.productTypes;
+  const stores = config.catalog.storefronts;
+  const categories = config.catalog.productCategories;
+  const pages = config.catalog.storePages;
+  unique(types, 'Product type'); unique(stores, 'Storefront'); unique(categories, 'Category'); unique(pages, 'Page');
+  types.forEach(type => { if (!validId(type.id)) errors.push(`Invalid product type ID: ${type.id}`); localized(type.label, `Product type ${type.id}`); });
+  stores.forEach(store => {
+    if (!validId(store.id)) errors.push(`Invalid storefront ID: ${store.id}`);
+    localized(store.title, `Storefront ${store.id}`);
+    if (store.enabled && !store.productTypeIds.some(id => types.some(type => type.id === id && type.enabled))) errors.push(`${store.title.en} needs at least one enabled product type.`);
+    if (store.landingPageId && !pages.some(page => page.id === store.landingPageId && page.enabled)) errors.push(`${store.title.en} points to a missing or disabled landing page.`);
+    store.categoryIds.forEach(id => { if (!categories.some(category => category.id === id && category.storefrontId === store.id)) errors.push(`${store.title.en} references a category that is missing or belongs to another store.`); });
+  });
+  categories.forEach(category => {
+    if (!stores.some(store => store.id === category.storefrontId)) errors.push(`Category ${category.id} references an unknown storefront.`);
+    localized(category.label, `Category ${category.id}`);
+  });
+  const supportedBlocks = new Set(['hero_v1', 'category_rail_v1', 'product_collection_v1', 'editorial_text_v1']);
+  pages.forEach(page => {
+    localized(page.title, `Page ${page.id}`);
+    unique(page.blocks, `Blocks on ${page.id}`);
+    page.blocks.forEach(block => {
+      if (!supportedBlocks.has(block.type)) errors.push(`${page.title.en} contains an unsupported block.`);
+      const blockCategories = block.categoryIds ?? [];
+      blockCategories.forEach(id => { if (!categories.some(category => category.id === id)) errors.push(`${page.title.en} references a missing category.`); });
+      const targetStore = block.query?.storefrontId;
+      if (targetStore && !stores.some(store => store.id === targetStore)) errors.push(`${page.title.en} references a missing storefront.`);
+    });
+  });
+  return [...new Set(errors)];
+}
+
+function renderValidation() {
+  const list = byId('validationList'); list.replaceChildren();
+  const errors = validateDraft();
+  const button = byId('exportDraftButton'); button.disabled = errors.length > 0;
+  const messages = errors.length ? errors : ['Storefront, category, page, and block references are valid for this local preview.'];
+  messages.forEach(message => { const item = text('li', message); if (errors.length) item.className = 'validation-error'; list.append(item); });
+}
+
+function exportDraft() {
+  const errors = validateDraft();
+  if (errors.length) { renderValidation(); return; }
+  const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+  const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `littlepages-draft-revision-${config.revision ?? 1}.json`; link.click();
+  URL.revokeObjectURL(link.href);
 }
 
 function addBlock() {
