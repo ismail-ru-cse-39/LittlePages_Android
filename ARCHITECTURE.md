@@ -25,6 +25,7 @@ Start as packages in the app module. Extract Gradle modules only when build owne
 - Model the shop as a multi-product storefront. Books are the first product type; toys and later merchandise use the same product, category, inventory, order, and storefront contracts where possible. Keep reading-specific assets, progress, and entitlements book-specific.
 - Store product metadata with locale-aware fields and stable IDs. Reader progress/bookmarks are per parent-owned child profile.
 - Book files stay private. Clients request authorized reading/offline access; the product decision is that customer PDF export/download is disabled.
+- Android's `OfflineBookVault` stores supplied book bytes only under `noBackupFilesDir`, encrypts with an Android Keystore AES-GCM key, binds the book ID and expiry into the authenticated data, and deletes a cached copy when its local expiry check fails. The caller must obtain and validate an access grant from the trusted service before writing or opening content; this vault does not authenticate a grant, renew access, or make a book downloadable through the customer UI. Server-time/clock rollback protection and account-linked revocation still require the access service.
 - Business and privacy rules still require owner approval before production configuration; see `TASKS.md` and `firebase/SCHEMA.md`.
 
 ## Configuration

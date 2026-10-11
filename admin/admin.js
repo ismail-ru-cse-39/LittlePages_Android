@@ -1,5 +1,11 @@
 const STORAGE_KEY = 'littlepages-admin-preview-draft-v1';
 const STAFF_STORAGE_KEY = 'littlepages-admin-staff-role-preview-v1';
+const HISTORY_STORAGE_KEY = 'littlepages-admin-preview-history-v1';
+const MODERATION_STORAGE_KEY = 'littlepages-admin-moderation-preview-v1';
+const sampleModerationReports = [
+  { id: 'sample-report-1', content: 'The forest guide was so helpful for our family story time.', reason: 'Sample: off-topic content', status: 'open' },
+  { id: 'sample-report-2', content: 'A fictional example post used to preview the moderation workflow.', reason: 'Sample: privacy concern', status: 'open' }
+];
 const fallback = {
   schemaVersion: 1,
   revision: 1,
@@ -35,6 +41,8 @@ const fallback = {
 let config;
 let products = [];
 let staffRoleDraft = [];
+let draftHistory = [];
+let moderationPreview;
 let selectedPageId = '';
 let eventsBound = false;
 const byId = id => document.getElementById(id);
@@ -73,6 +81,9 @@ async function loadConfig() {
   config.catalog.storePages ??= clone(fallback.catalog.storePages);
   selectedPageId = config.catalog.storePages[0]?.id ?? '';
   try { staffRoleDraft = JSON.parse(localStorage.getItem(STAFF_STORAGE_KEY) || '[]'); } catch { staffRoleDraft = []; }
+  try { draftHistory = JSON.parse(localStorage.getItem(HISTORY_STORAGE_KEY) || '[]'); } catch { draftHistory = []; }
+  try { moderationPreview = JSON.parse(localStorage.getItem(MODERATION_STORAGE_KEY) || 'null'); } catch { moderationPreview = null; }
+  moderationPreview ??= { reports: clone(sampleModerationReports), events: [] };
   bindEvents();
   render();
 }
@@ -128,14 +139,72 @@ function bindEvents() {
   byId('addBlockButton').addEventListener('click', addBlock);
   byId('publishButton').addEventListener('click', () => { renderValidation(); byId('publishDialog').showModal(); });
   byId('closeDialogButton').addEventListener('click', () => byId('publishDialog').close());
-  byId('saveDraftButton').addEventListener('click', () => { localStorage.setItem(STORAGE_KEY, JSON.stringify({ configuration: config, products })); byId('publishDialog').close(); render(); });
+  byId('saveDraftButton').addEventListener('click', () => { saveLocalDraft(); byId('publishDialog').close(); render(); });
   byId('exportDraftButton').addEventListener('click', exportDraft);
-  byId('resetButton').addEventListener('click', async () => { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(STAFF_STORAGE_KEY); staffRoleDraft = []; await loadConfig(); });
+  byId('resetButton').addEventListener('click', async () => { localStorage.removeItem(STORAGE_KEY); localStorage.removeItem(STAFF_STORAGE_KEY); localStorage.removeItem(HISTORY_STORAGE_KEY); localStorage.removeItem(MODERATION_STORAGE_KEY); staffRoleDraft = []; draftHistory = []; moderationPreview = null; await loadConfig(); });
 }
 
 function render() {
-  renderSummary(); renderStores(); renderCategories(); renderPages(); renderProductTypes(); renderPolicies(); renderProducts(); renderStaffRoles();
+  renderSummary(); renderStores(); renderCategories(); renderPages(); renderProductTypes(); renderPolicies(); renderProducts(); renderStaffRoles(); renderDraftHistory(); renderModerationPreview();
   byId('revisionValue').textContent = `Draft ${config.revision ?? 1}`;
+}
+
+function renderModerationPreview() {
+  const queue = byId('moderationQueue'); queue.replaceChildren();
+  const openReports = moderationPreview.reports.filter(report => report.status === 'open');
+  if (!openReports.length) queue.append(text('div', 'No open sample reports. The report history remains below.', 'empty-state'));
+  openReports.forEach(report => {
+    const card = document.createElement('article'); card.className = 'moderation-card';
+    card.append(text('span', report.reason, 'eyebrow'), text('p', report.content));
+    const actions = document.createElement('div'); actions.className = 'moderation-actions';
+    [['keep', 'Keep sample post'], ['hide', 'Hide sample post']].forEach(([decision, label]) => {
+      const button = text('button', label, decision === 'hide' ? 'button button-soft' : 'button button-primary'); button.type = 'button';
+      button.addEventListener('click', () => {
+        report.status = decision === 'hide' ? 'hidden' : 'kept';
+        moderationPreview.events.unshift({ reportId: report.id, action: report.status, actor: 'Local preview moderator', createdAt: new Date().toISOString() });
+        moderationPreview.events = moderationPreview.events.slice(0, 30);
+        localStorage.setItem(MODERATION_STORAGE_KEY, JSON.stringify(moderationPreview)); renderModerationPreview();
+      }); actions.append(button);
+    }); card.append(actions); queue.append(card);
+  });
+  const audit = byId('moderationAudit'); audit.replaceChildren();
+  if (!moderationPreview.events.length) audit.append(text('div', 'No preview decisions yet.', 'empty-state'));
+  moderationPreview.events.forEach(event => {
+    const row = document.createElement('div'); row.className = 'moderation-audit-row';
+    row.append(text('strong', `${event.action === 'hidden' ? 'Sample post hidden' : 'Sample post kept'}`));
+    row.append(text('span', `${event.actor} · ${new Date(event.createdAt).toLocaleString()}`)); audit.append(row);
+  });
+}
+
+function saveLocalDraft() {
+  config.revision = Number(config.revision ?? 0) + 1;
+  const savedDraft = { configuration: clone(config), products: clone(products) };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(savedDraft));
+  draftHistory.unshift({ id: newId('draft-revision'), savedAt: new Date().toISOString(), revision: config.revision, draft: savedDraft });
+  draftHistory = draftHistory.slice(0, 20);
+  localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(draftHistory));
+}
+
+function renderDraftHistory() {
+  const list = byId('draftHistoryList'); list.replaceChildren();
+  if (!draftHistory.length) { list.append(text('div', 'No saved browser drafts yet. Save a draft from Review publish to create a revision.', 'empty-state')); return; }
+  draftHistory.forEach(entry => {
+    const row = document.createElement('div'); row.className = 'draft-history-row';
+    const description = text('div', `Draft ${entry.revision}`, 'store-name');
+    description.append(text('small', new Date(entry.savedAt).toLocaleString())); row.append(description);
+    const counts = text('span', `${entry.draft.configuration.catalog.storefronts.length} storefronts · ${entry.draft.configuration.catalog.productCategories.length} categories · ${entry.draft.products.length} products`, 'draft-history-counts'); row.append(counts);
+    const restore = text('button', 'Restore this draft', 'button button-soft'); restore.type = 'button';
+    restore.addEventListener('click', () => {
+      if (!window.confirm(`Restore local draft ${entry.revision}? The current preview draft will be saved in history first.`)) return;
+      const current = { configuration: clone(config), products: clone(products) };
+      draftHistory.unshift({ id: newId('draft-revision'), savedAt: new Date().toISOString(), revision: config.revision, draft: current });
+      draftHistory = draftHistory.slice(0, 20);
+      config = clone(entry.draft.configuration); products = clone(entry.draft.products);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ configuration: config, products }));
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(draftHistory));
+      render();
+    }); row.append(restore); list.append(row);
+  });
 }
 
 function renderSummary() {
@@ -146,7 +215,8 @@ function renderSummary() {
 
 function renderStores() {
   const list = byId('storeList'); list.replaceChildren();
-  [...config.catalog.storefronts].sort((a, b) => a.sortOrder - b.sortOrder).forEach(store => {
+  const orderedStores = [...config.catalog.storefronts].sort((a, b) => a.sortOrder - b.sortOrder);
+  orderedStores.forEach((store, index) => {
     const row = document.createElement('div'); row.className = 'store-row';
     row.append(text('span', store.productTypeIds.includes('book') ? '▤' : '◇', 'store-icon'));
     const name = text('div', store.title.en, 'store-name'); name.append(text('small', `${store.slug} · ${store.productTypeIds.map(typeName).join(', ')}`)); row.append(name);
@@ -158,6 +228,18 @@ function renderStores() {
     pageSelect.addEventListener('change', () => { store.landingPageId = pageSelect.value || null; }); row.append(pageSelect);
     const toggle = document.createElement('input'); toggle.type = 'checkbox'; toggle.className = 'switch'; toggle.checked = store.enabled; toggle.setAttribute('aria-label', `${store.enabled ? 'Disable' : 'Enable'} ${store.title.en} storefront`);
     toggle.addEventListener('change', () => { store.enabled = toggle.checked; store.navigationVisible = toggle.checked; render(); }); row.append(toggle);
+    const actions = document.createElement('div'); actions.className = 'entity-actions';
+    const rename = text('button', 'Rename'); rename.type = 'button'; rename.addEventListener('click', () => {
+      const titleEn = window.prompt('Storefront name in English', store.title.en)?.trim();
+      if (!titleEn) return;
+      const titleBn = window.prompt('Storefront name in Bangla', store.title.bn)?.trim();
+      if (!titleBn) return;
+      store.title = { ...store.title, en: titleEn, bn: titleBn }; render();
+    }); actions.append(rename);
+    [['↑', -1, 'Move storefront up'], ['↓', 1, 'Move storefront down']].forEach(([label, delta, accessibleLabel]) => {
+      const move = text('button', label); move.type = 'button'; move.title = accessibleLabel; move.setAttribute('aria-label', `${accessibleLabel}: ${store.title.en}`); move.disabled = (index === 0 && Number(delta) < 0) || (index === orderedStores.length - 1 && Number(delta) > 0);
+      move.addEventListener('click', () => { moveByOrder(orderedStores, index, Number(delta)); render(); }); actions.append(move);
+    }); row.append(actions);
     list.append(row);
   });
 }
@@ -166,18 +248,35 @@ function renderCategories() {
   const select = byId('categoryStoreSelect'); select.replaceChildren();
   config.catalog.storefronts.forEach(store => { const option = document.createElement('option'); option.value = store.id; option.textContent = store.title.en; select.append(option); });
   const list = byId('categoryList'); list.replaceChildren();
-  config.catalog.productCategories.forEach(category => {
-    const row = document.createElement('div'); row.className = 'category-row';
+  [...config.catalog.productCategories].sort((a, b) => a.sortOrder - b.sortOrder).forEach(category => {
+    const row = document.createElement('div'); row.className = `category-row${category.enabled ? '' : ' archived'}`;
     const labels = text('div', category.label.en); labels.append(text('small', `${category.label.bn} · ${storeTitle(category.storefrontId)}`)); row.append(labels);
-    const remove = text('button', 'Remove', 'remove-button'); remove.type = 'button'; remove.addEventListener('click', () => {
-      config.catalog.productCategories = config.catalog.productCategories.filter(item => item.id !== category.id);
-      config.catalog.storefronts.forEach(store => { store.categoryIds = store.categoryIds.filter(id => id !== category.id); });
-      products.forEach(product => { product.categoryIds = product.categoryIds.filter(id => id !== category.id); });
-      config.catalog.storePages.forEach(page => page.blocks.forEach(block => { block.categoryIds = (block.categoryIds ?? []).filter(id => id !== category.id); if (block.query?.categoryIds) block.query.categoryIds = block.query.categoryIds.filter(id => id !== category.id); }));
-      render();
-    }); row.append(remove); list.append(row);
+    const actions = document.createElement('div'); actions.className = 'entity-actions';
+    const rename = text('button', 'Rename'); rename.type = 'button'; rename.addEventListener('click', () => {
+      const labelEn = window.prompt('Category name in English', category.label.en)?.trim();
+      if (!labelEn) return;
+      const labelBn = window.prompt('Category name in Bangla', category.label.bn)?.trim();
+      if (!labelBn) return;
+      category.label = { ...category.label, en: labelEn, bn: labelBn }; render();
+    }); actions.append(rename);
+    const siblings = [...config.catalog.productCategories].filter(item => item.storefrontId === category.storefrontId).sort((a, b) => a.sortOrder - b.sortOrder);
+    const categoryIndex = siblings.findIndex(item => item.id === category.id);
+    [['↑', -1, 'Move category up'], ['↓', 1, 'Move category down']].forEach(([label, delta, accessibleLabel]) => {
+      const move = text('button', label); move.type = 'button'; move.title = accessibleLabel; move.setAttribute('aria-label', `${accessibleLabel}: ${category.label.en}`);
+      move.disabled = (categoryIndex === 0 && Number(delta) < 0) || (categoryIndex === siblings.length - 1 && Number(delta) > 0);
+      move.addEventListener('click', () => { moveByOrder(siblings, categoryIndex, Number(delta)); render(); }); actions.append(move);
+    });
+    const archive = text('button', category.enabled ? 'Archive' : 'Restore', 'remove-button'); archive.type = 'button'; archive.addEventListener('click', () => { category.enabled = !category.enabled; render(); }); actions.append(archive);
+    row.append(actions); list.append(row);
   });
   const submit = byId('categoryForm').querySelector('button[type="submit"]'); submit.disabled = config.catalog.storefronts.length === 0;
+}
+
+function moveByOrder(items, index, delta) {
+  const targetIndex = index + delta;
+  if (index < 0 || targetIndex < 0 || targetIndex >= items.length) return;
+  [items[index], items[targetIndex]] = [items[targetIndex], items[index]];
+  items.forEach((item, position) => { item.sortOrder = (position + 1) * 10; });
 }
 
 function renderPages() {
