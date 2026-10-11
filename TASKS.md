@@ -9,7 +9,7 @@ Use the checkboxes below as the project tracker. Mark a task complete only when 
 - [x] Android project scaffold and Compose app shell created.
 - [x] UI prototype drafted for account entry, library, book details, reader, read-along, parent community, and supporting account/order screens.
 - [x] Debug APK build verified successfully.
-- [ ] Emulator/device review completed.
+- [x] User reviewed the responsive Android UI and confirmed it works on their tested device(s).
 - [ ] Backend, authentication, real book content, payments, and moderation connected.
 
 The current screens mostly use sample data and in-memory navigation. Reader page/bookmark state persists locally under a temporary profile key, but it does not sync. The app does not authenticate users, store or play book content, upload community images, or process orders or payments.
@@ -34,9 +34,15 @@ Resolve these decisions before connecting payments, publishing content, or colle
 
 - [x] Sync and build the starter project; align AGP 9.2.1 with Gradle 9.4.1 and resolve the Kotlin compile error.
 - [x] Choose initial app/core/feature/data package boundaries; see `ARCHITECTURE.md` (migration from prototype is pending).
-- [ ] Establish navigation, back behavior, loading, empty, error, and offline UI states.
+- [x] Establish route navigation and back behavior, including saving the current route across configuration changes.
+- [x] Add reusable empty states for missing search results, offline books, and orders.
+- [x] Detect changes to Android's validated default network and show an offline status banner.
+- [ ] Add loading and service-specific error/retry UI when remote services are connected.
 - [x] Adapt shared page widths to compact phones, tablets, and expanded windows; use a navigation rail at wide window sizes and compact welcome/reader layouts at short heights.
-- [ ] Centralize spacing and motion and finish migrating screen styling into the shared design system.
+- [x] Centralize spacing and motion and migrate screen spacing, shapes, sizes, and breakpoints into the shared design system.
+- [x] Define shared spacing, shape, size, breakpoint, and page-transition tokens in `ui/theme/Theme.kt`.
+- [x] Apply the shared tokens to common scaffolds, reusable controls, and primary screen/form spacing.
+- [x] Migrate remaining illustration-specific and one-off component dimensions into design tokens.
 - [x] Extract reusable layout, button, card, catalogue, and community primitives into `ui/components`; the palette remains in `ui/theme`.
 - [x] Add Android app-locale switching for English/Bangla and translate fixed app UI copy using system resource locales.
 - [ ] Review localized copy, dynamic catalogue text, and expansion on supported device sizes.
@@ -52,6 +58,7 @@ Resolve these decisions before connecting payments, publishing content, or colle
 
 ### Accounts and family setup
 
+- [x] Add guest browsing entry from sign-in, distinguish the guest profile, and gate key purchase, save, Premium, and parent-profile actions in the prototype.
 - [ ] Finish Google sign-in, email sign-in/sign-up, password reset, and phone verification screens.
 - [ ] Add parent account onboarding and child profile creation/editing.
 - [ ] Add account switching, sign-out, and parent-protected settings/purchase entry.
@@ -60,6 +67,7 @@ Resolve these decisions before connecting payments, publishing content, or colle
 
 - [ ] Finish Home, Library, Search/Filters, Book Details, and Reviews screens.
 - [x] Wire the Library category/age filters and Search query/suggestion chips to the local sample catalogue, including empty results.
+- [x] Render unavailable titles, in-app PDF availability, and physical-edition availability from catalogue data in Book Details and checkout; Premium/free access policy remains undecided in Phase 0.
 - [ ] Add book detail states for unavailable, free, Premium, PDF in-app, and physical editions.
 - [x] Finish the page-turn and continuous-scroll sample reader controls; actual PDF/ebook rendering remains in Phase 5.
 - [x] Add the Reader **Listen** action and reusable gentle Premium upsell dialog (prototype interaction; subscription is not connected).
@@ -78,7 +86,7 @@ Resolve these decisions before connecting payments, publishing content, or colle
 
 - [ ] Finish book format selection, address capture for physical books, payment selection, and order confirmation.
 - [ ] Add subscription status, renewal, cancellation, expired, and payment-recovery screens.
-- [ ] Add clear recovery UI for network loss, failed book access, interrupted offline saves, and failed payments.
+- [ ] Add service-specific recovery UI for failed book access, interrupted offline saves, and failed payments. A global offline banner is implemented; service retries depend on backend integration.
 
 **Done when:** each screen can be reached through the app flow, primary actions have a defined outcome, and screens cover loading, empty, success, and failure states where applicable.
 
@@ -154,11 +162,11 @@ Resolve these decisions before connecting payments, publishing content, or colle
 
 Keep this section current as work proceeds:
 
-- **Current phase:** Phase 1/2 — Prototype flow completion and foundation
-- **Next task:** Review responsive layouts on representative phone, tablet, landscape, and foldable emulator configurations; then continue the remaining Android screen states.
-- **Blockers:** Firebase project IDs and app registrations; content catalogue and distribution rights; offline eligibility/expiry policy; free/Premium entitlements; privacy/parent-consent/data-retention approval; physical fulfillment terms; approved moderation rules; applicable digital billing flow. Device review is also pending because this environment has no `adb` or connected emulator. These items remain unchecked.
-- **Completed in this pass:** extracted shared UI primitives and empty states; added persistent local reader position/bookmarks and Home resume progress; added distinct page-turn and continuous-scroll sample layouts; functional local Library/Search filters; working local book-save and feed-like controls; sign-in input validation without fake authentication; local child-profile and community/review previews with image selection; delivery validation, bKash/Visa selection, and support-form shortcuts; added Android English/Bangla app-locale support and translated fixed app UI copy; added scalable line heights, reduced-motion handling, accessible touch sizing, and stronger muted-text contrast; removed fabricated purchases/orders/offline books; added versioned Firestore contract and proposed Storage paths/limits; implemented device TTS narration, word highlighting, pause/resume, seek, voice/rate controls, audio focus, autoplay, and a one-page sample route; added width-bounded adaptive layouts, a wide-window navigation rail, compact-height welcome/reader layouts, and navigation-stack restoration across configuration changes; built `LittlePageApp_1.25.apk` successfully.
-- **Important limit:** local reading data uses a placeholder profile ID and has no cloud sync. Read-along currently speaks sample text using an installed English Android TTS voice; exact word timing depends on the engine and falls back to estimated word highlighting. No licensed book text/audio/timing is connected. Community images are not uploaded. Authentication, payment, real book content, offline content storage, and Firebase services are not connected. Responsive layouts compile, but visual review on device classes and fold posture changes remains pending.
+- **Current phase:** Phase 1/2 — Android foundation and local flow prototype
+- **Next task:** Review English/Bangla copy and dynamic catalogue text for truncation and layout expansion on supported device sizes.
+- **Blockers:** Firebase project IDs and app registrations; content catalogue and distribution rights; offline eligibility/expiry policy; free/Premium entitlements; privacy/parent-consent/data-retention approval; physical fulfillment terms; approved moderation rules; applicable digital billing flow. These decisions/integrations remain unchecked.
+- **Completed in this pass:** user confirmed the responsive UI works on their tested device(s); added validated-network monitoring with an offline banner and updated empty/error-state tracking; made book-detail and checkout formats follow per-title PDF/print availability; added shared spacing, shape, size, breakpoint, and motion tokens and applied them across common layouts and key screens; added guest browsing with account gates; added a vector adaptive launcher icon; retained responsive layouts, narration, reader progress, locale/accessibility foundations, and versioned Firebase contracts; direct APK output now uses `LittlePageApp_<version>.apk`; successful debug build produced `LittlePageApp_1.6.apk`.
+- **Important limit:** local reading data uses a placeholder profile ID and has no cloud sync. Read-along speaks sample text using an installed English Android TTS voice; exact word timing depends on the engine and falls back to estimated highlighting. No licensed book text/audio/timing is connected. Sample catalogue availability is local metadata. Community images are not uploaded. Authentication, payment, real book content, offline content storage, and Firebase services are not connected. Network status is monitored, but data fetching and service-specific retries are not yet implemented.
 - **Decision log (2026-10-11):** English and Bangla are launch languages. PDFs are in-app only for every customer, including Premium. Premium narration/word highlighting is a subscription feature. When a physical edition is available, offer both in-app PDF access and the printed book. Requested Bangladesh payment methods are bKash and Visa. Offline access is required; entitlement, expiry, and storage policy remain open.
 
 ### Task update convention
