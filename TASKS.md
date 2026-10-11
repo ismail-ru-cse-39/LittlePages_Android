@@ -18,14 +18,14 @@ The current screens mostly use sample data and in-memory navigation. Reader page
 
 Resolve these decisions before connecting payments, publishing content, or collecting child information.
 
-- [ ] Confirm the launch book catalogue, distribution rights, and who supplies English and Bangla content.
+- [x] Set a provisional catalogue/content policy in `firebase/config/provisional-defaults.v1.json`; owner approval of actual catalogue and distribution rights remains pending.
 - [x] Confirm the PDF offer: all customers read PDFs in-app; downloading/exporting is disabled.
-- [ ] Define offline-book rules, including eligibility, storage limits, access expiry, and removal after access ends.
-- [ ] Confirm which features are free and which require Premium, including what happens when a subscription expires.
+- [x] Set editable provisional offline rules (entitlement eligibility, 10-book family cap, 30-day lease, 7-day refresh, encrypted private storage, remove on expiry); owner approval remains pending.
+- [x] Set editable provisional access rules (catalogue free flag, active Premium requirement, retain separately purchased access after Premium expiry); billing and entitlement implementation remain pending.
 - [x] Record requested Bangladesh methods: bKash and Visa. Digital purchase flow still needs Play policy/provider review in Phase 6.
-- [ ] Define physical-book regions, stock handling, delivery fees, fulfillment, cancellation, and refund rules.
-- [ ] Decide parent consent, minimum data collection, account/data deletion, and child-profile requirements.
-- [ ] Define community rules, image restrictions, reporting, blocking, moderation response, and group ownership.
+- [x] Set editable provisional physical-book defaults (Bangladesh/BDT, bKash/Visa, confirmed stock and delivery quote required); fulfillment, cancellation/refunds, and owner approval remain pending.
+- [x] Set editable provisional family privacy defaults (parent-owned profiles, nickname and age band only, no personalized ads, parent deletion request); consent and retention approval remain pending.
+- [x] Set editable provisional community defaults (parent account, pre-moderation, child privacy, image limits, reports/blocks, admin-owned groups); moderation SLA and owner approval remain pending.
 - [x] Confirm launch languages: English and Bangla for app UI and the catalogue.
 
 **Done when:** decisions are written down and product, content, payment, privacy, and fulfillment owners agree on them.
@@ -97,21 +97,32 @@ Resolve these decisions before connecting payments, publishing content, or colle
 - [x] Define proposed Cloud Storage paths and upload limits for books, covers, narration, and community images (`firebase/SCHEMA.md`); production approval remains pending.
 - [ ] Implement Firebase Authentication account linking for Google, email, and phone methods.
 - [ ] Implement backend functions for book access, subscription entitlements, order creation, payment verification, and moderation actions.
+- [x] Define shared multi-product contracts for products, product types, storefronts, page templates/blocks, categories, inventory, and product/variant order lines; keep reader access/progress book-specific (`firebase/contracts/storefront.v1.schema.json`, `firebase/contracts/v1.json`).
+- [x] Add versioned storefront/type/category/page fields to the editable configuration schema and provide provisional Books and disabled Toys storefront examples.
+- [x] Define the client-side versioned configuration repository boundary, with schema/revision validation and last-valid-cache fallback; concrete Firestore and durable cache adapters remain pending.
+- [ ] Connect the versioned admin-managed storefront configuration and category registry to Firestore, with cached client reads, schema validation, admin-only publishing, revision history, and rollback.
 - [ ] Add role-based admin access, Firebase App Check, restrictive Firestore/Storage rules, and audit records.
 - [ ] Add monitoring and alerting for backend failures, storage errors, and payment/order processing.
 
 **Done when:** app clients cannot grant themselves access, admin actions are permission-checked, and data access follows the approved product rules.
 
-## Phase 4 — Catalogue and admin publishing
+## Phase 4 — Multi-product storefront and admin publishing
 
+- [x] Add a static local-only interaction prototype for storefront, category, page, and allowlisted block editing with browser draft persistence (`admin/`); this is not a staff-secured or publishing console.
 - [ ] Build the staff-only web admin shell and role management.
-- [ ] Add book create/edit/archive and draft/publish workflows.
-- [ ] Manage localized English/Bangla titles, descriptions, categories, age range, reading level, and series.
+- [ ] Add an admin settings area for the versioned editable policies in `firebase/config/provisional-defaults.v1.json`, with validation, impact preview, approval status, audit history, and rollback.
+- [x] Define supported declarative product type schema metadata for Books and Toys and allowlisted page block types in the shared contract; template rendering and product attribute editors remain open.
+- [ ] Implement shared product detail templates for Books and Toys; provide common fields plus validated type-specific attributes.
+- [ ] Add admin workflows to create, rename, reorder, disable, and archive storefronts/sections, product types, and localized categories; app navigation and filters must derive from published configuration.
+- [ ] Build an admin page composer using an allowlisted shared block set (hero, category rail, product grid/carousel, and editorial content); publish/reorder/preview/archive pages without an Android/iOS/web release.
+- [ ] Add generic product create/edit/archive and draft/publish workflows, with product-specific validation, variants, images, pricing, and stock.
+- [ ] Migrate books into the shared product listing contract while retaining book-specific age range, reading level, series, private reader assets, access, and progress models.
+- [ ] Manage localized English/Bangla titles, descriptions, categories, and product attributes; preserve IDs when labels or ordering change.
 - [ ] Upload and validate book files, covers, narration audio, and word-timing data.
-- [ ] Manage Premium/free access, in-app PDF access, physical edition availability, price, stock, and delivery details.
+- [ ] Manage book Premium/free access and in-app reading, plus product price, variants, stock, physical delivery, and supported order options.
 - [ ] Add preview, edit history, and publishing checks for rights, metadata, file integrity, and narration timing.
 
-**Done when:** an authorized staff member can publish and update a book without an app release, and the Android catalogue reflects the published changes.
+**Done when:** an authorized staff member can add a supported product category/store section, configure and publish a page from supported blocks, and publish products without an app release; Android reflects the revision safely. New behavior outside supported schemas/templates is explicitly tracked as app/backend work.
 
 ## Phase 5 — Reader, narration, and offline access
 
@@ -162,12 +173,13 @@ Resolve these decisions before connecting payments, publishing content, or colle
 
 Keep this section current as work proceeds:
 
-- **Current phase:** Local reader/community prototypes are in place; approved offline-content policy and backend setup block production reader and community integrations.
-- **Next task:** Define offline-book eligibility, storage limits, access expiry, and removal rules before implementing real offline storage.
-- **Blockers:** Firebase project IDs and app registrations; content catalogue and distribution rights; offline eligibility/expiry policy; free/Premium entitlements; privacy/parent-consent/data-retention approval; physical fulfillment terms; approved moderation rules; applicable digital billing flow. These decisions/integrations remain unchecked.
+- **Current phase:** Shared product/storefront/page schemas, Android configuration models/repository policy, and a local admin interaction prototype are in place. The Android app still uses local preview data; Firebase adapters and the staff admin console are required for live no-release updates.
+- **Next task:** Configure development Firebase project/app registration, then implement the read-only Firestore adapter and durable last-valid configuration cache. Keep admin publishing server-only.
+- **Blockers:** Firebase project IDs/app registrations and provider configuration; final owner/legal approval of provisional policies; content catalogue and distribution rights; physical fulfillment terms; moderation response ownership; applicable digital billing flow. Firebase auth, roles/App Check, Firestore adapters, and the web admin are not connected.
+- **Configuration progress:** Added the shared product/storefront/page schema, provisional Books and disabled Toys storefront definitions, plus Android models for product types, storefronts, and allowlisted blocks. Added a version-aware client repository boundary with validation and cached-revision fallback. The `admin/` prototype can edit storefronts/categories/pages and save a local draft. The preview app is still wired to local data; actual Firestore/cache adapters, staff authentication, server publishing, approvals, and audit history remain pending. Arbitrary new business logic/renderers/payment providers still require implementation work.
 - **Completed in this pass:** finished the local auth/onboarding screens, child-specific reading progress, offline list/removal preview, parent feed with local image posts and group discussions, profile/privacy/support surfaces, sample checkout/order history, subscription lifecycle previews, and service recovery flows; previous local browsing/detail/review states, preview account switching, report/block confirmation, and reusable loading/error/retry components remain complete. Added an Android `PdfRenderer` preview backed by a generated sample PDF in the app cache; this is placeholder content, not a customer book. No Firebase, account, storage, payment, moderation, or support request was connected, and no build was run.
 - **Important limit:** local reading data uses a placeholder profile ID and has no cloud sync. Read-along speaks sample text using an installed English Android TTS voice; exact word timing depends on the engine and falls back to estimated highlighting. No licensed book text/audio/timing is connected. Sample catalogue availability is local metadata. Community images are not uploaded. Authentication, payment, real book content, offline content storage, and Firebase services are not connected. Network status is monitored, but data fetching and service-specific retries are not yet implemented.
-- **Decision log (2026-10-11):** English and Bangla are launch languages. PDFs are in-app only for every customer, including Premium. Premium narration/word highlighting is a subscription feature. When a physical edition is available, offer both in-app PDF access and the printed book. Requested Bangladesh payment methods are bKash and Visa. Offline access is required; entitlement, expiry, and storage policy remain open.
+- **Decision log (2026-10-11):** English and Bangla are launch languages. PDFs are in-app only for every customer, including Premium. Premium narration/word highlighting is a subscription feature. When a physical edition is available, offer both in-app PDF access and the printed book. Requested Bangladesh payment methods are bKash and Visa. Generic offline, entitlement, privacy, physical-commerce, and community defaults are recorded as editable provisional settings; owner/legal approval and live admin publishing remain open.
 
 ### Task update convention
 

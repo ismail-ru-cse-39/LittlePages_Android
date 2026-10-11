@@ -42,6 +42,7 @@
           "title": { "$ref": "#/$defs/LocalizedText" }, "description": { "$ref": "#/$defs/LocalizedText" },
           "contentVersion": { "type": "integer", "minimum": 1 }, "pageCount": { "type": "integer", "minimum": 1 },
           "locales": { "type": "array", "items": { "enum": ["en", "bn"] }, "minItems": 1, "uniqueItems": true },
+          "categoryIds": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9_-]{2,40}$" }, "uniqueItems": true },
           "ageBand": { "enum": ["0-2", "3-5", "6-8", "9-12"] }, "free": { "type": "boolean" },
           "premium": { "type": "boolean" }, "pdfInAppEnabled": { "type": "boolean" },
           "physicalEdition": { "type": "object", "properties": { "available": { "type": "boolean" }, "stock": { "type": "integer", "minimum": 0 }, "currency": { "const": "BDT" }, "priceMinor": { "type": "integer", "minimum": 0 } }, "additionalProperties": false }
@@ -74,10 +75,18 @@
         { "type": "object", "required": ["orderId", "uid", "state", "currency", "totalMinor", "createdAt"], "properties": {
           "orderId": { "type": "string" }, "uid": { "type": "string" }, "state": { "enum": ["pending", "paid", "fulfilling", "shipped", "complete", "failed", "cancelled", "refunded"] },
           "currency": { "const": "BDT" }, "totalMinor": { "type": "integer", "minimum": 0 },
-          "itemIds": { "type": "array", "items": { "type": "string" } }, "paymentProvider": { "enum": ["bkash", "visa", "google_play"] },
+          "items": { "type": "array", "items": { "$ref": "#/$defs/OrderItem" }, "minItems": 1 }, "paymentProvider": { "enum": ["bkash", "visa", "google_play"] },
           "providerReference": { "type": "string" }, "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }
         } }
       ]
+    },
+    "OrderItem": {
+      "type": "object", "required": ["productId", "variantId", "quantity", "unitPriceMinor", "currency", "fulfillment"],
+      "properties": {
+        "productId": { "type": "string", "minLength": 1 }, "variantId": { "type": "string", "minLength": 1 },
+        "quantity": { "type": "integer", "minimum": 1 }, "unitPriceMinor": { "type": "integer", "minimum": 0 }, "currency": { "const": "BDT" },
+        "fulfillment": { "enum": ["physical", "in_app_reading"] }
+      }, "additionalProperties": false
     },
     "Review": {
       "allOf": [

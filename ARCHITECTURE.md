@@ -13,7 +13,7 @@
 
 `com.littlepages.app.core` contains shared design components, navigation contracts, result/error types, and platform utilities.
 
-`com.littlepages.app.feature.<name>` contains one feature's UI, state holder, and domain-facing interfaces. Initial features: `account`, `catalog`, `reader`, `community`, `family`, `commerce`, and `support`.
+`com.littlepages.app.feature.<name>` contains one feature's UI, state holder, and domain-facing interfaces. Initial features: `account`, `storefront`, `catalog`, `reader`, `community`, `family`, `commerce`, and `support`.
 
 `com.littlepages.app.data` contains repository implementations and local/remote data sources. Feature UI must not import Firestore, Storage, or payment SDK types.
 
@@ -22,10 +22,24 @@ Start as packages in the app module. Extract Gradle modules only when build owne
 ## Platform expansion
 
 - Android, iOS, web, and admin clients use shared backend contracts and server authorization. They do not share UI code.
-- Store all book metadata with locale-aware fields and a content version. Reader progress/bookmarks are per parent-owned child profile.
+- Model the shop as a multi-product storefront. Books are the first product type; toys and later merchandise use the same product, category, inventory, order, and storefront contracts where possible. Keep reading-specific assets, progress, and entitlements book-specific.
+- Store product metadata with locale-aware fields and stable IDs. Reader progress/bookmarks are per parent-owned child profile.
 - Book files stay private. Clients request authorized reading/offline access; the product decision is that customer PDF export/download is disabled.
 - Business and privacy rules still require owner approval before production configuration; see `TASKS.md` and `firebase/SCHEMA.md`.
 
 ## Configuration
 
 Do not commit service account keys, payment secrets, or production Firebase configuration. Add environment-specific Firebase app configuration only after the owner provides project IDs and app registrations. Secret values belong in CI/provider secret stores; client apps may contain public Firebase app identifiers, never server credentials.
+
+### Admin-managed product settings
+
+- Keep supported product policy and taxonomy in a versioned published configuration document (`publicConfiguration/current`), not in composable code or app constants. The provisional starting values live in `firebase/config/provisional-defaults.v1.json`.
+- Android UI observes a shared storefront/catalogue configuration repository. `VersionedStorefrontConfigurationRepository` now defines revision checks, schema validation, and last-valid-cache fallback behind remote/cache interfaces. The app is still wired to a local preview source; production Firestore and durable-cache adapters remain pending. Screens render stable IDs using localized labels from that source.
+- Storefront sections, product categories, and landing pages are admin-managed records. Admins can create, rename, reorder, disable, and archive them without an app release. A store page is assembled from an allowlisted set of cross-platform blocks (for example: hero, category rail, product grid, product carousel, and editorial text); clients render those blocks through a versioned template registry. Do not store executable code, arbitrary HTML, or scripts in configuration.
+- Product types use declared schemas and supported presentation templates. Admins can configure a supported type (for example, books or toys), its fields, categories, and page placement without an app release. Adding a new type that requires new behavior, fulfillment rules, or a renderer outside the supported schema still needs an app/backend release.
+- Products share fields such as localized title/description, images, status, category IDs, variants, price, and inventory. Type-specific attributes are validated against the product type schema. Book files, reading entitlements, narration, and progress remain in book-specific models.
+- Offline eligibility/expiry, access tiers, family privacy defaults, physical-book availability, and community rules are configurable values. A revision publish is audited, validated, and takes effect for supported app behavior without an app release.
+- Remote configuration cannot replace authorization. Server functions enforce content access, billing, stock, privacy requests, and moderation. The console cannot enable a capability that has no implemented payment provider or app/backend behavior.
+- Keep the configuration contract versioned and backward-compatible across Android, iOS, web, and staff admin. Unknown page blocks or schema versions must fail safely to a supported fallback and be observable; never make an unknown block crash the storefront.
+- `admin/` is currently a static interaction prototype that reads the shared provisional JSON and saves browser-local drafts. It is not an authenticated staff tool and has no authority to publish or modify Firebase.
+- All values are provisional until product/privacy/content owners approve them. Child privacy, store policy, law, and verified transaction state cannot be overridden by a client-side setting.

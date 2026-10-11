@@ -60,6 +60,8 @@ import com.littlepages.app.data.AndroidNarrationEngine
 import com.littlepages.app.data.NarrationAudioFocus
 import com.littlepages.app.data.NarrationState
 import com.littlepages.app.data.SamplePdfRenderer
+import com.littlepages.app.data.ManagedCategory
+import com.littlepages.app.data.PreviewCatalogConfigurationSource
 import com.littlepages.app.AppLanguage
 import com.littlepages.app.R
 import com.littlepages.app.ui.components.*
@@ -82,12 +84,12 @@ private enum class Page {
 
 internal data class Book(val title: String, val author: String, val age: String, val emoji: String, val tint: Color, val rating: String = "4.9", val categories: Set<String> = emptySet(), val minimumAge: Int = 0, val maximumAge: Int = 12, val hasBangla: Boolean = true, val isAvailable: Boolean = true, val pdfAvailable: Boolean = true, val physicalAvailable: Boolean = true, val premiumOnly: Boolean = false)
 private val books = listOf(
-    Book("The Brave Little Fox", "Emma Clarke", "Ages 3–7", "🦊", PagesColors.Sky, categories = setOf("Animals", "Friendship", "Nature"), minimumAge = 3, maximumAge = 7),
-    Book("A Day at the Lake", "Mina Rahman", "Ages 4–8", "🐻", PagesColors.Sage, categories = setOf("Animals", "Nature"), minimumAge = 4, maximumAge = 8, physicalAvailable = false),
-    Book("The Kind Giant", "Oliver Reed", "Ages 5–9", "🌿", PagesColors.Peach, categories = setOf("Friendship", "Nature"), minimumAge = 5, maximumAge = 9, pdfAvailable = false, premiumOnly = true),
-    Book("The Star Keeper", "Nadia Noor", "Ages 4–8", "🌙", Color(0xFFE8E4F3), categories = setOf("Nature", "Bedtime"), minimumAge = 4, maximumAge = 8, isAvailable = false, pdfAvailable = false, physicalAvailable = false)
+    Book("The Brave Little Fox", "Emma Clarke", "Ages 3–7", "🦊", PagesColors.Sky, categories = setOf("animals", "friendship", "nature"), minimumAge = 3, maximumAge = 7),
+    Book("A Day at the Lake", "Mina Rahman", "Ages 4–8", "🐻", PagesColors.Sage, categories = setOf("animals", "nature"), minimumAge = 4, maximumAge = 8, physicalAvailable = false),
+    Book("The Kind Giant", "Oliver Reed", "Ages 5–9", "🌿", PagesColors.Peach, categories = setOf("friendship", "nature"), minimumAge = 5, maximumAge = 9, pdfAvailable = false, premiumOnly = true),
+    Book("The Star Keeper", "Nadia Noor", "Ages 4–8", "🌙", Color(0xFFE8E4F3), categories = setOf("nature", "bedtime"), minimumAge = 4, maximumAge = 8, isAvailable = false, pdfAvailable = false, physicalAvailable = false)
 )
-private data class CommunityEntry(val body: String, val imageUri: android.net.Uri? = null, val category: String = "Stories", val author: String = "You", val time: String = "Just now") {
+private data class CommunityEntry(val body: String, val imageUri: android.net.Uri? = null, val category: String = "stories", val author: String = "You", val time: String = "Just now") {
     val hasPhoto: Boolean get() = imageUri != null
 }
 private data class ChildProfile(val nickname: String, val ageBand: String, val id: String = "${nickname.lowercase()}-${ageBand.filter(Char::isDigit)}")
@@ -119,6 +121,8 @@ fun LittlePagesApp() {
     val useNavigationRail = appConfiguration.screenWidthDp >= PagesBreakpoints.WideLayoutWidth.value.toInt()
     val mainTabs = listOf(Page.Home, Page.Library, Page.Community, Page.Parent, Page.Offline)
     val appContext = LocalContext.current
+    val configurationSource = remember { PreviewCatalogConfigurationSource() }
+    val managedConfiguration by configurationSource.configuration.collectAsState()
     val activity = appContext as? Activity
     val systemAnimationsEnabled = ValueAnimator.areAnimatorsEnabled()
     var hasInternet by remember(appContext) { mutableStateOf(true) }
@@ -226,15 +230,15 @@ fun LittlePagesApp() {
                 Page.PhoneCode -> PhoneVerificationScreen(phoneNumber = phoneNumber, onBack = ::back, onVerify = { unavailableNotice = "Phone verification is not connected yet. No code was sent or verified." })
                 Page.ParentSetup -> ParentOnboardingScreen(email = pendingParentEmail, onBack = ::back, onComplete = { name, email, child -> previewParentName = name; previewParentEmail = email; childProfiles.add(child); selectedChildId = child.id; parentPreviewMode = true; guestMode = false; stack.clear(); stack.add(Page.Home) })
                 Page.Home -> HomeScreen(continuePage = progressStore.page(activeChildId, books[0].title).coerceIn(1, 24), onBook = { selectedBook = it; go(Page.BookDetails) }, onContinue = { selectedBook = books[0]; go(Page.Reader) }, onLibrary = { stack.clear(); stack.add(Page.Library) }, onSearch = { go(Page.Search) }, onOffline = { go(Page.Offline) }, onPremium = { go(Page.Subscription) })
-                Page.Library -> LibraryScreen(onBook = { selectedBook = it; go(Page.BookDetails) }, onSearch = { go(Page.Search) }, onOffline = { go(Page.Offline) })
-                Page.Search -> SearchScreen(query = query, onQuery = { query = it }, onBook = { selectedBook = it; go(Page.BookDetails) }, onBack = ::back)
-                Page.BookDetails -> BookDetailsScreen(book = selectedBook, saved = selectedBook.title in savedBooks, premiumUnlocked = premium, onPremiumRequired = { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else premiumPrompt = true }, onSave = { if (guestMode) unavailableNotice = "Create a parent account to save books." else if (selectedBook.title in savedBooks) savedBooks.remove(selectedBook.title) else savedBooks.add(selectedBook.title) }, onBack = ::back, onRead = { if (selectedBook.premiumOnly && !premium) { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else premiumPrompt = true } else go(Page.Reader) }, onListen = { if (guestMode) unavailableNotice = "Create a parent account to use Premium listening." else openPremiumFeature() }, onReviews = { go(Page.Reviews) }, onOrder = { if (guestMode) unavailableNotice = "Create a parent account to order books." else go(Page.Checkout) }, onRecovery = { recoveryType = "book"; go(Page.Recovery) })
+                Page.Library -> LibraryScreen(categories = managedConfiguration.bookCategories, onBook = { selectedBook = it; go(Page.BookDetails) }, onSearch = { go(Page.Search) }, onOffline = { go(Page.Offline) })
+                Page.Search -> SearchScreen(query = query, categories = managedConfiguration.bookCategories, onQuery = { query = it }, onBook = { selectedBook = it; go(Page.BookDetails) }, onBack = ::back)
+                Page.BookDetails -> BookDetailsScreen(book = selectedBook, categories = managedConfiguration.bookCategories, saved = selectedBook.title in savedBooks, premiumUnlocked = premium, onPremiumRequired = { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else premiumPrompt = true }, onSave = { if (guestMode) unavailableNotice = "Create a parent account to save books." else if (selectedBook.title in savedBooks) savedBooks.remove(selectedBook.title) else savedBooks.add(selectedBook.title) }, onBack = ::back, onRead = { if (selectedBook.premiumOnly && !premium) { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else premiumPrompt = true } else go(Page.Reader) }, onListen = { if (guestMode) unavailableNotice = "Create a parent account to use Premium listening." else openPremiumFeature() }, onReviews = { go(Page.Reviews) }, onOrder = { if (guestMode) unavailableNotice = "Create a parent account to order books." else go(Page.Checkout) }, onRecovery = { recoveryType = "book"; go(Page.Recovery) })
                 Page.Reader -> ReaderScreen(book = selectedBook, mode = readerMode, page = currentPage, bookmarked = bookmarked, onBookmark = { bookmarked = progressStore.toggleBookmark(activeChildId, selectedBook.title, currentPage) }, onPage = { currentPage = it; progressStore.savePage(activeChildId, selectedBook.title, it) }, onMode = { readerMode = it }, onBack = ::back, onListen = ::openPremiumFeature, onPremium = { premiumPrompt = true })
                 Page.Listen -> ListenScreen(book = selectedBook, page = currentPage, autoplay = autoplay, onAutoplay = { autoplay = it }, onPageAdvance = { if (currentPage < 24) { currentPage += 1; progressStore.savePage(activeChildId, selectedBook.title, currentPage) } }, onBack = ::back)
                 Page.ListenPreview -> ListenScreen(book = selectedBook, page = currentPage, autoplay = false, onAutoplay = {}, onPageAdvance = {}, onBack = ::back, previewOnly = true)
-                Page.Community -> CommunityScreen(posts = communityPosts, blockedAuthors = blockedCommunityAuthors, onBlockAuthor = { if (it !in blockedCommunityAuthors) blockedCommunityAuthors.add(it) }, onGroup = { if (guestMode) unavailableNotice = "Create a parent account to join a group." else go(Page.Group) }, onCreate = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
+                Page.Community -> CommunityScreen(posts = communityPosts, categories = managedConfiguration.communityCategories, blockedAuthors = blockedCommunityAuthors, onBlockAuthor = { if (it !in blockedCommunityAuthors) blockedCommunityAuthors.add(it) }, onGroup = { if (guestMode) unavailableNotice = "Create a parent account to join a group." else go(Page.Group) }, onCreate = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
                 Page.Group -> GroupScreen(posts = groupPosts, blockedAuthors = blockedCommunityAuthors, onBlockAuthor = { if (it !in blockedCommunityAuthors) blockedCommunityAuthors.add(it) }, canParticipate = !guestMode, onBack = ::back, onCreatePost = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
-                Page.CreatePost -> CreatePostScreen(onBack = ::back, onPost = { post -> if (stack.getOrNull(stack.lastIndex - 1) == Page.Group) groupPosts.add(0, post) else communityPosts.add(0, post); back() })
+                Page.CreatePost -> CreatePostScreen(categories = managedConfiguration.communityCategories, maximumImageBytes = managedConfiguration.maximumCommunityImageBytes, allowedImageMimeTypes = managedConfiguration.allowedCommunityImageMimeTypes, onBack = ::back, onPost = { post -> if (stack.getOrNull(stack.lastIndex - 1) == Page.Group) groupPosts.add(0, post) else communityPosts.add(0, post); back() })
                 Page.Reviews -> ReviewsScreen(book = selectedBook, onBack = ::back)
                 Page.Offline -> OfflineScreen(books = books.filter { it.title in offlineBookTitles }, onBack = ::back, onBrowse = { stack.clear(); stack.add(Page.Library) }, onRemove = { offlineBookTitles.remove(it.title) }, onRetrySync = { recoveryType = "offline"; go(Page.Recovery) })
                 Page.Parent -> ParentScreen(guest = guestMode, previewAccount = parentPreviewMode, parentName = previewParentName, parentEmail = previewParentEmail, language = selectedLanguage, child = childProfiles.firstOrNull { it.id == activeChildId }, onLanguage = { tag -> selectedLanguage = tag; activity?.let { AppLanguage.set(it, tag) } }, onProfiles = { if (guestMode) unavailableNotice = "Create a parent account to add child profiles." else go(Page.Profiles) }, onSubscription = { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else go(Page.Subscription) }, onOrders = { if (guestMode) unavailableNotice = "Sign in to view orders." else go(Page.Orders) }, onSupport = { go(Page.Support) }, onOffline = { if (guestMode) unavailableNotice = "Sign in to manage offline books." else go(Page.Offline) }, onPrivacy = { go(Page.Privacy) }, onUnavailable = { message -> if (guestMode || parentPreviewMode) { guestMode = false; parentPreviewMode = false; stack.clear(); stack.add(Page.Welcome) } else unavailableNotice = message }, onCreateAccount = { guestMode = false; parentPreviewMode = false; stack.clear(); stack.add(Page.Welcome) })
@@ -432,16 +436,19 @@ private fun HomeScreen(continuePage: Int, onBook: (Book) -> Unit, onContinue: ()
 }
 
 @Composable
-private fun LibraryScreen(onBook: (Book) -> Unit, onSearch: () -> Unit, onOffline: () -> Unit) {
-    var selectedCategory by remember { mutableStateOf("All") }
+private fun LibraryScreen(categories: List<ManagedCategory>, onBook: (Book) -> Unit, onSearch: () -> Unit, onOffline: () -> Unit) {
+    val language = LocalConfiguration.current.locales[0].language
+    val activeCategories = categories.filter { it.enabled }.sortedBy { it.sortOrder }
+    val categoryOptions = listOf("all" to if (language == "bn") "সব" else "All") + activeCategories.map { it.id to it.label(language) } + listOf("bangla-language" to "বাংলা")
+    var selectedCategory by remember { mutableStateOf("all") }
+    val effectiveCategory = selectedCategory.takeIf { id -> categoryOptions.any { it.first == id } } ?: "all"
     var selectedAge by remember { mutableStateOf("All ages") }
-    val categories = listOf("All", "Animals", "Friendship", "Nature", "Bedtime", "Bangla")
     val ages = listOf("All ages", "Ages 0–3", "Ages 4–6", "Ages 7–9")
     val filteredBooks = books.filter { book ->
-        val categoryMatches = when (selectedCategory) {
-            "All" -> true
-            "Bangla" -> book.hasBangla
-            else -> selectedCategory in book.categories
+        val categoryMatches = when (effectiveCategory) {
+            "all" -> true
+            "bangla-language" -> book.hasBangla
+            else -> effectiveCategory in book.categories
         }
         val ageMatch = when (selectedAge) {
             "All ages" -> true
@@ -454,7 +461,7 @@ private fun LibraryScreen(onBook: (Book) -> Unit, onSearch: () -> Unit, onOfflin
     MainPage(title = "Book library", subtitle = "Find a story for every little mood.") {
         SearchBarCard(onSearch)
         Spacer(Modifier.height(PagesSpacing.CardContent))
-        ChipRow(categories, selectedIndex = categories.indexOf(selectedCategory), onSelect = { selectedCategory = categories[it] })
+        ChipRow(categoryOptions.map { it.second }, selectedIndex = categoryOptions.indexOfFirst { it.first == effectiveCategory }, onSelect = { selectedCategory = categoryOptions[it].first })
         Spacer(Modifier.height(PagesSpacing.Relaxed))
         SectionTitle("Browse by age")
         ChipRow(ages, selectedIndex = ages.indexOf(selectedAge), onSelect = { selectedAge = ages[it] })
@@ -466,9 +473,14 @@ private fun LibraryScreen(onBook: (Book) -> Unit, onSearch: () -> Unit, onOfflin
 }
 
 @Composable
-private fun SearchScreen(query: String, onQuery: (String) -> Unit, onBook: (Book) -> Unit, onBack: () -> Unit) {
-    val suggestions = listOf("Animals", "Kindness", "Bedtime", "বাংলা গল্প")
-    val results = books.filter { query.isBlank() || it.title.contains(query, true) || it.author.contains(query, true) || it.categories.any { category -> category.contains(query, true) } || (query.contains("বাংলা") && it.hasBangla) }
+private fun SearchScreen(query: String, categories: List<ManagedCategory>, onQuery: (String) -> Unit, onBook: (Book) -> Unit, onBack: () -> Unit) {
+    val language = LocalConfiguration.current.locales[0].language
+    val activeCategories = categories.filter { it.enabled }.sortedBy { it.sortOrder }
+    val suggestions = activeCategories.map { it.label(language) }.take(5) + if (language == "bn") listOf("বাংলা গল্প") else listOf("Bangla stories")
+    val results = books.filter { book ->
+        val labels = book.categories.mapNotNull { id -> activeCategories.firstOrNull { it.id == id }?.label(language) }
+        query.isBlank() || book.title.contains(query, true) || book.author.contains(query, true) || labels.any { it.contains(query, true) } || (query.contains("বাংলা", true) && book.hasBangla)
+    }
     PageScaffold(onBack, "Search books") {
         OutlinedTextField(query, onQuery, modifier = Modifier.fillMaxWidth(), placeholder = { AppText("Title, character, or topic") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { onQuery("") }) { Icon(Icons.Filled.Clear, contentDescription = "Clear search") } }, shape = RoundedCornerShape(PagesShapes.Tag), singleLine = true)
         Spacer(Modifier.height(PagesSpacing.Medium)); SectionTitle(if (query.isBlank()) "Suggested for you" else "Search results (${results.size})")
@@ -480,7 +492,8 @@ private fun SearchScreen(query: String, onQuery: (String) -> Unit, onBook: (Book
 }
 
 @Composable
-private fun BookDetailsScreen(book: Book, saved: Boolean, premiumUnlocked: Boolean, onPremiumRequired: () -> Unit, onSave: () -> Unit, onBack: () -> Unit, onRead: () -> Unit, onListen: () -> Unit, onReviews: () -> Unit, onOrder: () -> Unit, onRecovery: () -> Unit) {
+private fun BookDetailsScreen(book: Book, categories: List<ManagedCategory>, saved: Boolean, premiumUnlocked: Boolean, onPremiumRequired: () -> Unit, onSave: () -> Unit, onBack: () -> Unit, onRead: () -> Unit, onListen: () -> Unit, onReviews: () -> Unit, onOrder: () -> Unit, onRecovery: () -> Unit) {
+    val language = LocalConfiguration.current.locales[0].language
     PageScaffold(onBack, "Book details", action = { IconButton(onClick = onSave) { Icon(if (saved) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, if (saved) "Remove saved book" else "Save book", tint = PagesColors.Forest) } }) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             BookCover(book, Modifier.size(width = PagesSizes.BookDetailCoverWidth, height = PagesSizes.BookDetailCoverHeight))
@@ -495,7 +508,8 @@ private fun BookDetailsScreen(book: Book, saved: Boolean, premiumUnlocked: Boole
         }
         Spacer(Modifier.height(PagesSpacing.SectionGap))
         AppText("A story about kindness, courage, and finding your voice. Follow a curious little fox as a new adventure leads to an unexpected friendship.", color = PagesColors.Muted, style = MaterialTheme.typography.bodyMedium)
-        Spacer(Modifier.height(PagesSpacing.Medium)); ChipRow(listOf("Animals", "Courage", "Friendship", "Nature"))
+        val bookCategoryLabels = book.categories.mapNotNull { id -> categories.firstOrNull { it.id == id && it.enabled }?.label(language) }
+        if (bookCategoryLabels.isNotEmpty()) { Spacer(Modifier.height(PagesSpacing.Medium)); ChipRow(bookCategoryLabels) }
         Spacer(Modifier.height(PagesSpacing.Large))
         if (!book.isAvailable) {
             EmptyState(Icons.Filled.AutoStories, "This book is unavailable", "Check back later to see if this story returns to the catalogue.")
@@ -752,20 +766,23 @@ private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (
 }
 
 @Composable
-private fun CommunityScreen(posts: List<CommunityEntry>, blockedAuthors: List<String>, onBlockAuthor: (String) -> Unit, onGroup: () -> Unit, onCreate: () -> Unit) {
+private fun CommunityScreen(posts: List<CommunityEntry>, categories: List<ManagedCategory>, blockedAuthors: List<String>, onBlockAuthor: (String) -> Unit, onGroup: () -> Unit, onCreate: () -> Unit) {
     var showGuidelines by remember { mutableStateOf(false) }
-    val feedCategories = listOf("For you", "Discussions", "Tips", "Activities")
-    var selectedFeed by remember { mutableStateOf(feedCategories.first()) }
+    val language = LocalConfiguration.current.locales[0].language
+    val activeCategories = categories.filter { it.enabled }.sortedBy { it.sortOrder }
+    val feedCategories = listOf("all" to if (language == "bn") "আপনার জন্য" else "For you") + activeCategories.map { it.id to it.label(language) }
+    var selectedFeed by remember { mutableStateOf("all") }
+    val effectiveFeed = selectedFeed.takeIf { id -> feedCategories.any { it.first == id } } ?: "all"
     val examplePosts = listOf(
-        CommunityEntry("We finished The Brave Little Fox last night. My little one wanted to talk about courage at breakfast! 🦊", category = "Tips", author = "Sarah Mitchell", time = "2 days ago"),
-        CommunityEntry("Looking for gentle Bangla stories for a 5-year-old. What are your family favourites?", category = "Discussions", author = "Amina Rahman", time = "Yesterday"),
-        CommunityEntry("Our library hosted a lovely family story hour this weekend.", category = "Activities", author = "James Carter", time = "3 days ago")
+        CommunityEntry("We finished The Brave Little Fox last night. My little one wanted to talk about courage at breakfast! 🦊", category = "tips", author = "Sarah Mitchell", time = "2 days ago"),
+        CommunityEntry("Looking for gentle Bangla stories for a 5-year-old. What are your family favourites?", category = "discussions", author = "Amina Rahman", time = "Yesterday"),
+        CommunityEntry("Our library hosted a lovely family story hour this weekend.", category = "activities", author = "James Carter", time = "3 days ago")
     )
-    val feedPosts = (posts + examplePosts).filter { it.author !in blockedAuthors && (selectedFeed == "For you" || it.category == selectedFeed) }
+    val feedPosts = (posts + examplePosts).filter { it.author !in blockedAuthors && (effectiveFeed == "all" || it.category == effectiveFeed) }
     MainPage(title = "Parent community", subtitle = "A kind space to share the reading journey.", action = { Row { IconButton(onClick = { showGuidelines = true }) { Icon(Icons.Filled.Info, "Community guidelines", tint = PagesColors.Forest) }; IconButton(onClick = onCreate) { Icon(Icons.Filled.Add, "Create post", tint = PagesColors.Forest) } } }) {
         AppText("Community guidelines: protect children’s privacy, be kind, and share only images you have permission to post. Report content that feels unsafe. Moderation is not connected in this preview.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
         CardSurface(Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onCreate), color = PagesColors.Sage) { Row(verticalAlignment = Alignment.CenterVertically) { Avatar("E"); AppText(" Share a thought with parents…", color = PagesColors.Muted, modifier = Modifier.weight(1f).padding(horizontal = PagesSpacing.ControlGap)); Icon(Icons.Filled.AddPhotoAlternate, null, tint = PagesColors.Forest) } }
-        Spacer(Modifier.height(PagesSpacing.Medium)); ChipRow(feedCategories, selectedIndex = feedCategories.indexOf(selectedFeed), onSelect = { selectedFeed = feedCategories[it] })
+        Spacer(Modifier.height(PagesSpacing.Medium)); ChipRow(feedCategories.map { it.second }, selectedIndex = feedCategories.indexOfFirst { it.first == effectiveFeed }, onSelect = { selectedFeed = feedCategories[it].first })
         Spacer(Modifier.height(PagesSpacing.CardContent)); SectionTitle("Groups to explore", "See all", onClick = onGroup)
         Row(horizontalArrangement = Arrangement.spacedBy(PagesSpacing.ControlGap)) { GroupTile("Raising Kind Kids", "312 parents", "🌱", onGroup); GroupTile("Bedtime Stories", "186 parents", "🌙", onGroup) }
         Spacer(Modifier.height(PagesSpacing.SectionGap)); SectionTitle("Recent posts")
@@ -814,20 +831,22 @@ private fun GroupScreen(posts: List<CommunityEntry>, blockedAuthors: List<String
 }
 
 @Composable
-private fun CreatePostScreen(onBack: () -> Unit, onPost: (CommunityEntry) -> Unit) {
+private fun CreatePostScreen(categories: List<ManagedCategory>, maximumImageBytes: Long, allowedImageMimeTypes: Set<String>, onBack: () -> Unit, onPost: (CommunityEntry) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var post by remember { mutableStateOf("") }
     var selectedPhoto by remember { mutableStateOf<android.net.Uri?>(null) }
     var photoError by remember { mutableStateOf<String?>(null) }
-    var selectedCategory by remember { mutableStateOf("Stories") }
+    val language = LocalConfiguration.current.locales[0].language
+    val activeCategories = categories.filter { it.enabled }.sortedBy { it.sortOrder }
+    var selectedCategory by remember(activeCategories) { mutableStateOf(activeCategories.firstOrNull()?.id ?: "stories") }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             val (mimeType, withinLimit) = withContext(Dispatchers.IO) {
                 val detectedType = context.contentResolver.getType(uri)
                 val size = runCatching { context.contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize } }.getOrNull() ?: -1L
-                val acceptableSize = if (size >= 0L) size <= 8L * 1024L * 1024L else runCatching {
+                val acceptableSize = if (size >= 0L) size <= maximumImageBytes else runCatching {
                     context.contentResolver.openInputStream(uri)?.use { stream ->
                         val buffer = ByteArray(8192)
                         var total = 0L
@@ -835,16 +854,16 @@ private fun CreatePostScreen(onBack: () -> Unit, onPost: (CommunityEntry) -> Uni
                             val count = stream.read(buffer)
                             if (count == -1) break
                             total += count
-                            if (total > 8L * 1024L * 1024L) break
+                            if (total > maximumImageBytes) break
                         }
-                        total <= 8L * 1024L * 1024L
+                        total <= maximumImageBytes
                     } ?: false
                 }.getOrDefault(false)
                 detectedType to acceptableSize
             }
             when {
-                mimeType !in setOf("image/jpeg", "image/png", "image/webp") -> photoError = "Choose a JPEG, PNG, or WebP image."
-                !withinLimit -> photoError = "Choose an image smaller than 8 MB. Its size must be readable to check this limit."
+                mimeType !in allowedImageMimeTypes -> photoError = "This image format is not enabled for community posts."
+                !withinLimit -> photoError = "Choose an image smaller than ${maximumImageBytes / (1024L * 1024L)} MB. Its size must be readable to check this limit."
                 else -> { selectedPhoto = uri; photoError = null }
             }
         }
@@ -853,8 +872,7 @@ private fun CreatePostScreen(onBack: () -> Unit, onPost: (CommunityEntry) -> Uni
         CardSurface(Modifier.fillMaxWidth()) { Row(verticalAlignment = Alignment.CenterVertically) { Avatar("E"); Column(Modifier.padding(start = PagesSpacing.Compact)) { AppText("Emma’s parent", fontWeight = FontWeight.SemiBold); AppText("Posting as a parent", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) } } }
         OutlinedTextField(value = post, onValueChange = { post = it }, placeholder = { AppText("What would you like to share?") }, modifier = Modifier.fillMaxWidth().height(PagesSizes.PostInputHeight), shape = RoundedCornerShape(PagesShapes.Card))
         SectionTitle("Choose a topic")
-        val categories = listOf("Stories", "Discussions", "Tips", "Activities")
-        ChipRow(categories, selectedIndex = categories.indexOf(selectedCategory), onSelect = { selectedCategory = categories[it] })
+        ChipRow(activeCategories.map { it.label(language) }, selectedIndex = activeCategories.indexOfFirst { it.id == selectedCategory }, onSelect = { selectedCategory = activeCategories[it].id })
         CardSurface(Modifier.fillMaxWidth().clickable(role = Role.Button) { photoPicker.launch("image/*") }, color = PagesColors.Sky) { Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.AddPhotoAlternate, null, tint = PagesColors.Forest); Column(Modifier.weight(1f).padding(horizontal = PagesSpacing.ControlGap)) { AppText(if (selectedPhoto == null) "Add a family-friendly photo" else "Photo selected", fontWeight = FontWeight.SemiBold); if (selectedPhoto != null) AppText("Attached to this local preview", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }; Icon(Icons.Filled.ChevronRight, null) } }
         AppText("Please keep children’s personal details private. Posts are visible to community members.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
         PrimaryButton("Preview post", Icons.AutoMirrored.Filled.Send) { if (post.isNotBlank()) onPost(CommunityEntry(post.trim(), selectedPhoto, selectedCategory)) }

@@ -1,6 +1,19 @@
 # LittlePages Firebase data contract draft
 
-This is a backend-neutral starting contract for development and review. Machine-readable document shapes are in `contracts/v1.json`. No Firebase project is connected and the default rules deny every client request. Never loosen the rules to make a prototype screen work.
+This is a backend-neutral starting contract for development and review. Machine-readable document shapes are in `contracts/v1.json`, `contracts/configuration.v1.schema.json`, and `contracts/storefront.v1.schema.json`. The shared multi-product contract is drafted; Firebase project setup, adapters, rules, and admin publishing are not connected. The default rules deny every client request. Never loosen the rules to make a prototype screen work.
+
+## Admin-managed configuration
+
+- `publicConfiguration/current` (target shape): published revision of admin-managed product settings, storefront navigation, supported product type declarations, localized category registries, and page definitions. The provisional config now includes a Books storefront, a disabled Toys storefront, and a sample Books page; the expanded config schema references `contracts/storefront.v1.schema.json`. Live publishing and production validation remain pending. It also carries editable offline, entitlement, privacy, physical commerce, and community policy values.
+- `configurationRevisions/{revisionId}`: immutable revision snapshot, admin uid, changed-field summary, reason, and timestamp. The staff service writes a new audit snapshot on every publish and rollback.
+- `adminRoles/{uid}`: server-managed staff role and status. Never allow a client to grant itself a role or publish configuration.
+- App clients read the published configuration and cache the last valid revision. Unknown schema versions or invalid values fall back to the last valid revision and are reported; clients never write configuration.
+- The staff web admin edits a draft, validates it, previews the impact, then publishes a new monotonically increasing revision. Keep an audit record with admin uid, changed fields, old/new revision, timestamp, and reason. Rollback publishes another revision; it does not erase history.
+- Category, storefront, product type, page, and block IDs are stable identifiers. Admins can add, rename, reorder, disable, and archive supported categories and storefront sections; products reference IDs, never display labels. Existing records keep working when labels change. Do not hard-delete IDs referenced by published content.
+- Store pages are declarative compositions of allowlisted, versioned blocks (for example hero, category rail, product grid/carousel, and editorial text). Android, iOS, web, and admin preview clients share the block contract but implement their own renderers. Reject unsupported block types and schema versions safely; never evaluate arbitrary HTML, JavaScript, or uploaded code.
+- Product type declarations select supported schemas and presentation templates. Adding a toy category/store section, or configuring a supported toy product type, is data work; introducing new fulfillment logic or a new renderer/behavior remains application/backend work.
+- Policy configuration is a product control plane, not a security boundary. Cloud Functions must check entitlements, stock, payment state, consent, moderation state, and offline access on every relevant operation. The client can hide unavailable controls, but cannot grant access. Keep Firestore client writes to configuration denied; only the trusted admin service may publish.
+- Values in `config/provisional-defaults.v1.json` are generic starting defaults, not legal, billing, or production approval. Admin edits should take effect through a published configuration revision without an Android/iOS/web release for supported settings and categories. Adding a new executable capability or payment provider still requires implementation work.
 
 ## Identity and family
 
@@ -10,7 +23,12 @@ This is a backend-neutral starting contract for development and review. Machine-
 
 ## Catalogue and reading
 
-- `books/{bookId}`: publication state, localized title/description/author/category, age range, page count, cover asset key, edition availability, prices, rights metadata, content version.
+- `products/{productId}`: common listing data including product type ID, publication state, localized title/description, category IDs, image keys, variants, price/currency, inventory/availability, and validated type-specific attributes. Shape is defined in `contracts/storefront.v1.schema.json`. Physical books and toys use the same listing/order surface where applicable.
+- `storefronts/{storefrontId}`: localized name, route/slug, product type/category scope, enabled/published state, navigation placement, supported regions, and optional landing page ID.
+- `storePages/{pageId}`: localized page metadata and ordered allowlisted blocks such as hero, category rail, product grid/carousel, and editorial content. Blocks reference product/category IDs or controlled content; they contain no executable markup or script.
+- `productTypes/{typeId}`: admin-configurable schema and supported template selection for types the clients/backend know how to render/validate (initially books and toys). Contract shapes for storefronts, products, product types, and page blocks are in `contracts/storefront.v1.schema.json`. Adding unsupported behavior requires a client/backend release.
+- Products store `categoryIds: ["animals", "bedtime"]`; display labels and filter ordering come from the managed category registry, not client literals.
+- `books/{bookId}` (or a book-specific extension keyed to the corresponding product): reader-specific age range, reading level, series, page count, rights metadata, content version, and physical/digital book edition information. Final normalization/migration is a tracked Phase 3 task.
 - `books/{bookId}/assets/{assetId}`: private Storage object key, asset type (`cover`, `reader`, `narration`, `timings`), checksum, locale, content version. Reader assets are served only after server entitlement checks and remain app-private on device.
 - `users/{uid}/profiles/{childId}/progress/{bookId}`: current page/position, completion, last-read timestamp, content version.
 - `users/{uid}/profiles/{childId}/bookmarks/{bookmarkId}`: book, page/position, created timestamp.
@@ -18,7 +36,7 @@ This is a backend-neutral starting contract for development and review. Machine-
 
 ## Commerce
 
-- `orders/{orderId}`: owning uid, line items, physical/digital fulfillment type, price/currency snapshot, status, payment reference, delivery snapshot where needed, timestamps.
+- `orders/{orderId}`: owning uid, product/variant line items with quantity and price/currency snapshots, physical/in-app-reading fulfillment type, status, payment reference, delivery snapshot where needed, timestamps. Line item shape is in `contracts/v1.json`.
 - `paymentEvents/{eventId}`: provider event ID, order/subscription reference, verified result, received/processed timestamps. Server-only and idempotent by provider event ID.
 - `subscriptions/{subscriptionId}`: uid, provider, verified product/state/renewal dates, provider transaction references. Server-only writes.
 

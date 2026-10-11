@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://littlepages.example/contracts/storefront/v1.json",
+  "title": "LittlePages multi-product storefront contract",
+  "description": "Shared product and server-driven storefront document shapes. Rendering and behavior are restricted to registered types and blocks.",
+  "$defs": {
+    "LocalizedText": {
+      "type": "object",
+      "properties": { "en": { "type": "string", "maxLength": 5000 }, "bn": { "type": "string", "maxLength": 5000 } },
+      "additionalProperties": false
+    },
+    "LocalizedLabel": {
+      "type": "object",
+      "required": ["en", "bn"],
+      "properties": { "en": { "type": "string", "minLength": 1, "maxLength": 100 }, "bn": { "type": "string", "minLength": 1, "maxLength": 100 } },
+      "additionalProperties": false
+    },
+    "Category": {
+      "type": "object",
+      "required": ["id", "storefrontId", "label", "enabled", "sortOrder"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9_-]{2,60}$" },
+        "storefrontId": { "type": "string", "pattern": "^[a-z0-9_-]{2,60}$" },
+        "label": { "$ref": "#/$defs/LocalizedLabel" }, "enabled": { "type": "boolean" }, "sortOrder": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+    "AttributeDefinition": {
+      "type": "object",
+      "required": ["id", "label", "valueType", "required"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,39}$" }, "label": { "$ref": "#/$defs/LocalizedLabel" },
+        "valueType": { "enum": ["text", "number", "boolean", "enum", "text_list"] }, "required": { "type": "boolean" },
+        "options": { "type": "array", "items": { "$ref": "#/$defs/LocalizedLabel" }, "maxItems": 100 }
+      },
+      "additionalProperties": false
+    },
+    "ProductType": {
+      "type": "object",
+      "required": ["id", "label", "schemaVersion", "renderer", "attributes", "enabled"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9_-]{2,60}$" }, "label": { "$ref": "#/$defs/LocalizedLabel" },
+        "schemaVersion": { "type": "integer", "minimum": 1 },
+        "renderer": { "enum": ["book_v1", "physical_good_v1"] },
+        "attributes": { "type": "array", "items": { "$ref": "#/$defs/AttributeDefinition" }, "maxItems": 50 },
+        "enabled": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "Storefront": {
+      "type": "object",
+      "required": ["id", "slug", "title", "productTypeIds", "enabled", "sortOrder"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9_-]{2,60}$" }, "slug": { "type": "string", "pattern": "^[a-z0-9-]{2,80}$" },
+        "title": { "$ref": "#/$defs/LocalizedLabel" }, "description": { "$ref": "#/$defs/LocalizedText" },
+        "productTypeIds": { "type": "array", "items": { "type": "string" }, "minItems": 1, "uniqueItems": true },
+        "categoryIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "landingPageId": { "type": ["string", "null"] }, "navigationVisible": { "type": "boolean" },
+        "enabled": { "type": "boolean" }, "sortOrder": { "type": "integer" },
+        "regions": { "type": "array", "items": { "type": "string", "minLength": 2 }, "uniqueItems": true }
+      },
+      "additionalProperties": false
+    },
+    "PageBlock": {
+      "oneOf": [
+        { "type": "object", "required": ["id", "type", "title", "imageAssetId", "action"], "properties": {
+          "id": { "type": "string" }, "type": { "const": "hero_v1" }, "title": { "$ref": "#/$defs/LocalizedLabel" },
+          "imageAssetId": { "type": ["string", "null"] }, "action": { "type": ["object", "null"], "properties": { "kind": { "enum": ["storefront", "category", "product"] }, "targetId": { "type": "string" } }, "required": ["kind", "targetId"], "additionalProperties": false }
+        }, "additionalProperties": false },
+        { "type": "object", "required": ["id", "type", "title", "categoryIds"], "properties": {
+          "id": { "type": "string" }, "type": { "const": "category_rail_v1" }, "title": { "$ref": "#/$defs/LocalizedLabel" }, "categoryIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+        }, "additionalProperties": false },
+        { "type": "object", "required": ["id", "type", "title", "query", "layout"], "properties": {
+          "id": { "type": "string" }, "type": { "const": "product_collection_v1" }, "title": { "$ref": "#/$defs/LocalizedLabel" },
+          "query": { "type": "object", "properties": { "storefrontId": { "type": "string" }, "categoryIds": { "type": "array", "items": { "type": "string" } }, "productTypeIds": { "type": "array", "items": { "type": "string" } }, "productIds": { "type": "array", "items": { "type": "string" } } }, "additionalProperties": false },
+          "layout": { "enum": ["grid", "carousel"] }
+        }, "additionalProperties": false },
+        { "type": "object", "required": ["id", "type", "body"], "properties": {
+          "id": { "type": "string" }, "type": { "const": "editorial_text_v1" }, "body": { "$ref": "#/$defs/LocalizedText" }
+        }, "additionalProperties": false }
+      ]
+    },
+    "StorePage": {
+      "type": "object",
+      "required": ["id", "title", "blocks", "enabled", "schemaVersion"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9_-]{2,60}$" }, "title": { "$ref": "#/$defs/LocalizedLabel" },
+        "schemaVersion": { "type": "integer", "minimum": 1 }, "enabled": { "type": "boolean" },
+        "blocks": { "type": "array", "items": { "$ref": "#/$defs/PageBlock" }, "maxItems": 40 }
+      },
+      "additionalProperties": false
+    },
+    "ProductVariant": {
+      "type": "object",
+      "required": ["id", "label", "priceMinor", "currency", "stockState"],
+      "properties": {
+        "id": { "type": "string" }, "label": { "$ref": "#/$defs/LocalizedLabel" },
+        "priceMinor": { "type": "integer", "minimum": 0 }, "currency": { "const": "BDT" },
+        "stockState": { "enum": ["in_stock", "out_of_stock", "preorder", "not_applicable"] }, "stockQuantity": { "type": ["integer", "null"], "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "Product": {
+      "type": "object",
+      "required": ["id", "typeId", "status", "title", "categoryIds", "variants", "attributes"],
+      "properties": {
+        "id": { "type": "string" }, "typeId": { "type": "string" }, "status": { "enum": ["draft", "published", "archived"] },
+        "title": { "$ref": "#/$defs/LocalizedLabel" }, "description": { "$ref": "#/$defs/LocalizedText" },
+        "categoryIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "imageAssetIds": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
+        "variants": { "type": "array", "items": { "$ref": "#/$defs/ProductVariant" }, "minItems": 1, "maxItems": 100 },
+        "attributes": { "type": "object", "additionalProperties": { "type": ["string", "number", "boolean", "array"] } },
+        "createdAt": { "type": "string", "format": "date-time" }, "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LittlePages · Store manager</title>
+  <link rel="stylesheet" href="admin.css">
+  <link rel="stylesheet" href="admin-overrides.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#overview"><span class="brand-mark">✿</span><span>LittlePages<small>STUDIO</small></span></a>
+    <p class="nav-caption">WORKSPACE</p>
+    <nav aria-label="Admin sections">
+      <a class="nav-link active" href="#overview">⌂ <span>Overview</span></a>
+      <a class="nav-link" href="#stores">▦ <span>Storefronts</span></a>
+      <a class="nav-link" href="#pages">▤ <span>Pages</span></a>
+      <a class="nav-link" href="#categories">◉ <span>Categories</span></a>
+      <a class="nav-link" href="#products">◇ <span>Product types</span></a>
+    </nav>
+    <div class="sidebar-bottom"><span class="avatar">LP</span><span>Local preview<small>Draft workspace</small></span></div>
+  </aside>
+
+  <main>
+    <header class="topbar"><div><span class="eyebrow">STORE MANAGEMENT</span><h1>Good morning, team</h1></div><div class="top-actions"><span class="draft-pill"><i></i> Draft changes</span><button id="resetButton" class="button button-soft">Reset preview</button><button id="publishButton" class="button button-primary">Review publish</button></div></header>
+    <div class="notice" role="status"><strong>Local preview only</strong><span>Changes stay in this browser. Staff sign-in, Firebase publishing, approvals, and audit history are not connected.</span></div>
+
+    <section id="overview" class="section-heading"><div><span class="eyebrow">YOUR COMMERCE SPACE</span><h2>A store that can grow with you</h2><p>Manage books today and prepare new product areas for tomorrow.</p></div><div class="revision-card"><span>CONFIG REVISION</span><strong id="revisionValue">Draft 1</strong></div></section>
+
+    <section class="metrics" aria-label="Workspace summary"><article class="metric-card"><span>Storefronts</span><strong id="storeCount">0</strong><small>Configured product areas</small></article><article class="metric-card"><span>Categories</span><strong id="categoryCount">0</strong><small>Across all storefronts</small></article><article class="metric-card"><span>Pages</span><strong id="pageCount">0</strong><small>Built from supported blocks</small></article><article class="metric-card accent-card"><span>Supported languages</span><strong>EN <b>·</b> বাংলা</strong><small>English and Bangla labels</small></article></section>
+
+    <section id="stores" class="panel">
+      <div class="panel-heading"><div><span class="eyebrow">COMMERCE</span><h2>Storefronts</h2><p>Turn supported product areas on, arrange navigation, and choose a landing page.</p></div><button id="addStoreButton" class="button button-primary">＋ New storefront</button></div>
+      <div id="storeList" class="store-list"></div>
+      <form id="storeForm" class="inline-form" hidden><label>English name<input name="titleEn" required maxlength="60" placeholder="e.g. Toys"></label><label>বাংলা নাম<input name="titleBn" required maxlength="60" placeholder="যেমন খেলনা"></label><label>Product type<select name="typeId"><option value="book">Books</option><option value="toy">Toys</option></select></label><button class="button button-primary" type="submit">Add storefront</button><button id="cancelStoreButton" class="button button-soft" type="button">Cancel</button></form>
+    </section>
+
+    <div class="two-column">
+      <section id="categories" class="panel">
+        <div class="panel-heading compact"><div><span class="eyebrow">DISCOVERY</span><h2>Categories</h2><p>Categories are linked to a storefront by stable IDs.</p></div></div>
+        <form id="categoryForm" class="category-form"><label>Storefront<select name="storeId" id="categoryStoreSelect"></select></label><label>English<input name="labelEn" required maxlength="60" placeholder="e.g. Building"></label><label>বাংলা<input name="labelBn" required maxlength="60" placeholder="যেমন নির্মাণ"></label><button class="button button-soft" type="submit">Add category</button></form>
+        <div id="categoryList" class="category-list"></div>
+      </section>
+
+      <section id="pages" class="panel">
+        <div class="panel-heading compact"><div><span class="eyebrow">PAGE COMPOSER</span><h2>Store pages</h2><p>Arrange content from the approved block set.</p></div><div class="page-heading-actions"><button id="newPageButton" class="button button-soft">＋ New page</button><label class="select-label">Edit page<select id="pageSelect"></select></label></div></div>
+        <div class="block-toolbar"><select id="blockType" aria-label="Block type"><option value="editorial_text_v1">Editorial text</option><option value="hero_v1">Hero</option><option value="category_rail_v1">Category rail</option><option value="product_collection_v1">Product collection</option></select><button id="addBlockButton" class="button button-primary">＋ Add block</button></div>
+        <ol id="blockList" class="block-list"></ol>
+        <label class="page-title-field">Page title<input id="pageTitleInput" maxlength="100"></label>
+      </section>
+    </div>
+
+    <section id="products" class="panel product-type-panel"><div class="panel-heading compact"><div><span class="eyebrow">SUPPORTED PRODUCT TYPES</span><h2>Product types</h2><p>Admins can create storefronts from these supported templates. New behavior needs an app/backend update.</p></div></div><div id="productTypeList" class="type-list"></div></section>
+    <footer>LittlePages Studio <span>·</span> Configuration editor preview</footer>
+  </main>
+  <dialog id="publishDialog"><div class="dialog-icon">✦</div><h2>Ready to review?</h2><p>This prototype can save a draft in this browser, but cannot publish it to LittlePages. Connect staff authentication and the trusted Firebase publishing service before enabling live changes.</p><div class="dialog-actions"><button id="closeDialogButton" class="button button-soft">Back to editing</button><button id="saveDraftButton" class="button button-primary">Save local draft</button></div></dialog>
+  <script src="admin.js"></script>
+</body>
+</html>

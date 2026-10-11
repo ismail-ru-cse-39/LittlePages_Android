@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://littlepages.example/contracts/configuration/v1.json",
+  "title": "Admin-managed LittlePages configuration",
+  "description": "Provisional editable defaults. Policy values require owner review and are never authorization by themselves.",
+  "type": "object",
+  "required": ["schemaVersion", "revision", "status", "catalog", "offlinePolicy", "accessPolicy", "privacyPolicy", "physicalCommercePolicy", "communityPolicy"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "revision": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["provisional", "approved"] },
+    "updatedAt": { "type": ["string", "null"], "format": "date-time" },
+    "catalog": {
+      "type": "object",
+      "required": ["supportedLocales", "bookCategories", "communityCategories", "storefronts", "productTypes", "productCategories", "storePages"],
+      "properties": {
+        "supportedLocales": { "type": "array", "items": { "enum": ["en", "bn"] }, "uniqueItems": true },
+        "bookCategories": { "$ref": "#/$defs/Categories" },
+        "communityCategories": { "$ref": "#/$defs/Categories" },
+        "storefronts": { "type": "array", "items": { "$ref": "https://littlepages.example/contracts/storefront/v1.json#/$defs/Storefront" } },
+        "productTypes": { "type": "array", "items": { "$ref": "https://littlepages.example/contracts/storefront/v1.json#/$defs/ProductType" } },
+        "productCategories": { "type": "array", "items": { "$ref": "https://littlepages.example/contracts/storefront/v1.json#/$defs/Category" } },
+        "storePages": { "type": "array", "items": { "$ref": "https://littlepages.example/contracts/storefront/v1.json#/$defs/StorePage" } }
+      },
+      "additionalProperties": false
+    },
+    "offlinePolicy": {
+      "type": "object",
+      "required": ["enabled", "eligibility", "maximumBooksPerFamily", "accessLeaseDays", "onlineRefreshAfterDays", "encryptAppPrivateStorage", "removeWhenEntitlementExpires", "allowExport"],
+      "properties": {
+        "enabled": { "type": "boolean" }, "eligibility": { "enum": ["active_book_entitlement", "active_subscription", "admin_grant"] },
+        "maximumBooksPerFamily": { "type": "integer", "minimum": 0 }, "accessLeaseDays": { "type": "integer", "minimum": 1 },
+        "onlineRefreshAfterDays": { "type": "integer", "minimum": 1 }, "encryptAppPrivateStorage": { "type": "boolean" },
+        "removeWhenEntitlementExpires": { "type": "boolean" }, "allowExport": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "accessPolicy": { "$ref": "#/$defs/AccessPolicy" },
+    "privacyPolicy": { "$ref": "#/$defs/PrivacyPolicy" },
+    "physicalCommercePolicy": { "$ref": "#/$defs/PhysicalCommercePolicy" },
+    "communityPolicy": { "$ref": "#/$defs/CommunityPolicy" }
+  },
+  "$defs": {
+    "LocalizedLabel": {
+      "type": "object",
+      "required": ["en", "bn"],
+      "properties": { "en": { "type": "string", "minLength": 1, "maxLength": 60 }, "bn": { "type": "string", "minLength": 1, "maxLength": 60 } },
+      "additionalProperties": false
+    },
+    "Category": {
+      "type": "object",
+      "required": ["id", "label", "enabled", "sortOrder"],
+      "properties": { "id": { "type": "string", "pattern": "^[a-z0-9_-]{2,40}$" }, "label": { "$ref": "#/$defs/LocalizedLabel" }, "enabled": { "type": "boolean" }, "sortOrder": { "type": "integer" } },
+      "additionalProperties": false
+    },
+    "Categories": { "type": "array", "items": { "$ref": "#/$defs/Category" } },
+    "AccessPolicy": {
+      "type": "object", "required": ["freeAccess", "premiumBooksRequireActiveSubscription", "premiumNarrationRequiresActiveSubscription", "purchasedBookAccessSurvivesSubscriptionExpiry", "grantAccessFromClientSuccessScreen"],
+      "properties": {
+        "freeAccess": { "enum": ["book_catalogue_flag", "none"] }, "premiumBooksRequireActiveSubscription": { "type": "boolean" },
+        "premiumNarrationRequiresActiveSubscription": { "type": "boolean" }, "purchasedBookAccessSurvivesSubscriptionExpiry": { "type": "boolean" },
+        "grantAccessFromClientSuccessScreen": { "const": false }
+      }, "additionalProperties": false
+    },
+    "PrivacyPolicy": {
+      "type": "object", "required": ["parentAccountOwnsChildProfiles", "collectOnlyNicknameAndAgeBandForChildProfile", "personalizedAdvertising", "parentCanRequestAccountAndChildDataDeletion", "deletionRetentionDays", "requiresOwnerAndLegalReview"],
+      "properties": {
+        "parentAccountOwnsChildProfiles": { "type": "boolean" }, "collectOnlyNicknameAndAgeBandForChildProfile": { "type": "boolean" },
+        "personalizedAdvertising": { "type": "boolean" }, "parentCanRequestAccountAndChildDataDeletion": { "type": "boolean" },
+        "deletionRetentionDays": { "type": ["integer", "null"], "minimum": 0 }, "requiresOwnerAndLegalReview": { "type": "boolean" }
+      }, "additionalProperties": false
+    },
+    "PhysicalCommercePolicy": {
+      "type": "object", "required": ["enabled", "availableRegions", "currency", "paymentMethods", "showInAppPdfAndPhysicalOptionsWhenBothAvailable", "requireConfirmedStockAndDeliveryQuoteBeforeCheckout", "cancellationAndRefundRules", "requiresOwnerReview"],
+      "properties": {
+        "enabled": { "type": "boolean" }, "availableRegions": { "type": "array", "items": { "type": "string", "minLength": 2 } },
+        "currency": { "enum": ["BDT"] }, "paymentMethods": { "type": "array", "items": { "enum": ["bkash", "visa"] }, "uniqueItems": true },
+        "showInAppPdfAndPhysicalOptionsWhenBothAvailable": { "type": "boolean" }, "requireConfirmedStockAndDeliveryQuoteBeforeCheckout": { "type": "boolean" },
+        "cancellationAndRefundRules": { "type": ["string", "null"] }, "requiresOwnerReview": { "type": "boolean" }
+      }, "additionalProperties": false
+    },
+    "CommunityPolicy": {
+      "type": "object", "required": ["parentAccountRequired", "moderateBeforePublicVisibility", "prohibitChildContactAndLocationDetails", "allowedImageMimeTypes", "maximumImageBytes", "maximumImagesPerPost", "groupOwnership", "allowUserCreatedGroups", "reportAndBlockEnabled", "moderationResponseTargetHours", "requiresOwnerReview"],
+      "properties": {
+        "parentAccountRequired": { "type": "boolean" }, "moderateBeforePublicVisibility": { "type": "boolean" }, "prohibitChildContactAndLocationDetails": { "type": "boolean" },
+        "allowedImageMimeTypes": { "type": "array", "items": { "enum": ["image/jpeg", "image/png", "image/webp"] }, "uniqueItems": true },
+        "maximumImageBytes": { "type": "integer", "minimum": 0 }, "maximumImagesPerPost": { "type": "integer", "minimum": 0 },
+        "groupOwnership": { "enum": ["admin_managed", "parent_managed"] }, "allowUserCreatedGroups": { "type": "boolean" }, "reportAndBlockEnabled": { "type": "boolean" },
+        "moderationResponseTargetHours": { "type": ["integer", "null"], "minimum": 0 }, "requiresOwnerReview": { "type": "boolean" }
+      }, "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

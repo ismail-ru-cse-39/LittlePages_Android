@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "revision": 1,
+  "status": "provisional",
+  "updatedAt": null,
+  "catalog": {
+    "supportedLocales": ["en", "bn"],
+    "bookCategories": [
+      { "id": "animals", "label": { "en": "Animals", "bn": "প্রাণী" }, "enabled": true, "sortOrder": 10 },
+      { "id": "friendship", "label": { "en": "Friendship", "bn": "বন্ধুত্ব" }, "enabled": true, "sortOrder": 20 },
+      { "id": "nature", "label": { "en": "Nature", "bn": "প্রকৃতি" }, "enabled": true, "sortOrder": 30 },
+      { "id": "bedtime", "label": { "en": "Bedtime", "bn": "ঘুমের আগে" }, "enabled": true, "sortOrder": 40 },
+      { "id": "courage", "label": { "en": "Courage", "bn": "সাহস" }, "enabled": true, "sortOrder": 50 }
+    ],
+    "communityCategories": [
+      { "id": "stories", "label": { "en": "Stories", "bn": "গল্প" }, "enabled": true, "sortOrder": 10 },
+      { "id": "discussions", "label": { "en": "Discussions", "bn": "আলোচনা" }, "enabled": true, "sortOrder": 20 },
+      { "id": "tips", "label": { "en": "Tips", "bn": "পরামর্শ" }, "enabled": true, "sortOrder": 30 },
+      { "id": "activities", "label": { "en": "Activities", "bn": "কার্যক্রম" }, "enabled": true, "sortOrder": 40 }
+    ],
+    "productTypes": [
+      { "id": "book", "label": { "en": "Books", "bn": "বই" }, "schemaVersion": 1, "renderer": "book_v1", "attributes": [], "enabled": true },
+      { "id": "toy", "label": { "en": "Toys", "bn": "খেলনা" }, "schemaVersion": 1, "renderer": "physical_good_v1", "attributes": [], "enabled": true }
+    ],
+    "storefronts": [
+      { "id": "books", "slug": "books", "title": { "en": "Books", "bn": "বই" }, "description": { "en": "Stories for every little reader.", "bn": "প্রতিটি ছোট পাঠকের জন্য গল্প।" }, "productTypeIds": ["book"], "categoryIds": ["animals", "friendship", "nature", "bedtime", "courage"], "landingPageId": "books-home", "navigationVisible": true, "enabled": true, "sortOrder": 10, "regions": ["BD"] },
+      { "id": "toys", "slug": "toys", "title": { "en": "Toys", "bn": "খেলনা" }, "description": { "en": "Learning through play.", "bn": "খেলার মাধ্যমে শেখা।" }, "productTypeIds": ["toy"], "categoryIds": [], "landingPageId": null, "navigationVisible": false, "enabled": false, "sortOrder": 20, "regions": ["BD"] }
+    ],
+    "productCategories": [
+      { "id": "animals", "storefrontId": "books", "label": { "en": "Animals", "bn": "প্রাণী" }, "enabled": true, "sortOrder": 10 },
+      { "id": "friendship", "storefrontId": "books", "label": { "en": "Friendship", "bn": "বন্ধুত্ব" }, "enabled": true, "sortOrder": 20 },
+      { "id": "nature", "storefrontId": "books", "label": { "en": "Nature", "bn": "প্রকৃতি" }, "enabled": true, "sortOrder": 30 },
+      { "id": "bedtime", "storefrontId": "books", "label": { "en": "Bedtime", "bn": "ঘুমের আগে" }, "enabled": true, "sortOrder": 40 },
+      { "id": "courage", "storefrontId": "books", "label": { "en": "Courage", "bn": "সাহস" }, "enabled": true, "sortOrder": 50 }
+    ],
+    "storePages": [
+      { "id": "books-home", "title": { "en": "Books", "bn": "বই" }, "schemaVersion": 1, "enabled": true, "blocks": [
+        { "id": "welcome", "type": "editorial_text_v1", "body": { "en": "Stories for every little reader.", "bn": "প্রতিটি ছোট পাঠকের জন্য গল্প।" } },
+        { "id": "featured-books", "type": "product_collection_v1", "title": { "en": "Popular this week", "bn": "এই সপ্তাহের জনপ্রিয়" }, "query": { "storefrontId": "books" }, "layout": "carousel" }
+      ] }
+    ]
+  },
+  "offlinePolicy": {
+    "enabled": true,
+    "eligibility": "active_book_entitlement",
+    "maximumBooksPerFamily": 10,
+    "accessLeaseDays": 30,
+    "onlineRefreshAfterDays": 7,
+    "encryptAppPrivateStorage": true,
+    "removeWhenEntitlementExpires": true,
+    "allowExport": false
+  },
+  "accessPolicy": {
+    "freeAccess": "book_catalogue_flag",
+    "premiumBooksRequireActiveSubscription": true,
+    "premiumNarrationRequiresActiveSubscription": true,
+    "purchasedBookAccessSurvivesSubscriptionExpiry": true,
+    "grantAccessFromClientSuccessScreen": false
+  },
+  "privacyPolicy": {
+    "parentAccountOwnsChildProfiles": true,
+    "collectOnlyNicknameAndAgeBandForChildProfile": true,
+    "personalizedAdvertising": false,
+    "parentCanRequestAccountAndChildDataDeletion": true,
+    "deletionRetentionDays": null,
+    "requiresOwnerAndLegalReview": true
+  },
+  "physicalCommercePolicy": {
+    "enabled": true,
+    "availableRegions": ["BD"],
+    "currency": "BDT",
+    "paymentMethods": ["bkash", "visa"],
+    "showInAppPdfAndPhysicalOptionsWhenBothAvailable": true,
+    "requireConfirmedStockAndDeliveryQuoteBeforeCheckout": true,
+    "cancellationAndRefundRules": null,
+    "requiresOwnerReview": true
+  },
+  "communityPolicy": {
+    "parentAccountRequired": true,
+    "moderateBeforePublicVisibility": true,
+    "prohibitChildContactAndLocationDetails": true,
+    "allowedImageMimeTypes": ["image/jpeg", "image/png", "image/webp"],
+    "maximumImageBytes": 5242880,
+    "maximumImagesPerPost": 4,
+    "groupOwnership": "admin_managed",
+    "allowUserCreatedGroups": false,
+    "reportAndBlockEnabled": true,
+    "moderationResponseTargetHours": null,
+    "requiresOwnerReview": true
+  }
+}
