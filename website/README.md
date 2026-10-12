@@ -1,6 +1,6 @@
 # LittlePages website preview
 
-This responsive English/Bangla storefront prototype reads the shared provisional storefront configuration from `firebase/config/provisional-defaults.v1.json` and sample product documents from `firebase/config/demo-products.v1.json`. Navigation, category labels, page blocks, and product filtering are driven by the same stable IDs and block types used by the Android/admin prototypes.
+This responsive English/Bangla storefront prototype reads a publication manifest and one pinned snapshot from `firebase/config/demo-manifest.v1.json` and `firebase/config/demo-publication.v1.json`. The manifest identifies the configuration and catalogue revisions and carries a SHA-256 hash of the complete snapshot. The browser verifies the snapshot before swapping it into view, keeps the last valid snapshot in local storage, and rechecks the manifest when the tab becomes visible. Navigation, categories, page blocks, and product filtering use the shared IDs and block types used by the Android/admin prototypes.
 
 Serve it from the repository root so browser fetches can reach the shared data files:
 
@@ -10,4 +10,4 @@ python3 -m http.server 8000
 
 Open `http://localhost:8000/website/`.
 
-The website uses sample content and local rendering. It has no account service, live manifest listener, Firebase connection, orders, payments, or production book access. `firebase/PUBLISHING.md` describes the shared revision/API connection that still needs Firebase setup.
+The website uses a checked-in demo manifest and sample content. Its visibility refresh and cache are browser-local; it has no live manifest listener, Firebase connection, accounts, orders, payments, or production book access. The demo hash protects against accidental snapshot mismatch, not a malicious server or a user-editable local cache. `firebase/PUBLISHING.md` describes the trusted publishing API and cross-client update behavior that still need Firebase setup.

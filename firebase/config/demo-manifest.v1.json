@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "publicationRevision": 1,
+  "configurationRevision": 1,
+  "catalogRevision": 1,
+  "publishedAt": "2026-10-12T00:00:00Z",
+  "publishedBy": "local-demo",
+  "supportedLocales": [
+    "en",
+    "bn"
+  ],
+  "contentHash": "6accf216f4b9abb1faede7ab31d774b4f4bba7e7c1568507e0f65234a078e4fa",
+  "minimumClientVersions": {
+    "web": "0.1.0"
+  }
+}

@@ -1,6 +1,9 @@
 const LANGUAGE_KEY = 'littlepages-site-language-v1';
+const CONTENT_CACHE_KEY = 'littlepages-site-publication-cache-v1';
 let configuration;
 let products = [];
+let activeManifest;
+let publicationRefreshPending = false;
 let language = localStorage.getItem(LANGUAGE_KEY) === 'bn' ? 'bn' : 'en';
 let currentStoreId = null;
 let activeCategoryId = '';
@@ -11,19 +14,103 @@ const node = (tag, value, className) => { const element = document.createElement
 
 async function start() {
   try {
-    const [configurationResponse, productsResponse] = await Promise.all([
-      fetch('../firebase/config/provisional-defaults.v1.json'),
-      fetch('../firebase/config/demo-products.v1.json')
-    ]);
-    if (!configurationResponse.ok || !productsResponse.ok) throw new Error('Could not load the shared preview content.');
-    configuration = await configurationResponse.json();
-    products = await productsResponse.json();
+    await refreshPublication();
     currentStoreId = configuration.catalog.storefronts.find(store => store.enabled)?.id ?? null;
     bindEvents();
     render();
   } catch {
+    const cached = readCachedPublication();
+    if (cached) {
+      try {
+        validateManifest(cached.manifest);
+        await validateSnapshot(cached.manifest, cached.snapshot);
+        activatePublication(cached.manifest, cached.snapshot);
+        currentStoreId = configuration.catalog.storefronts.find(store => store.enabled)?.id ?? null;
+        bindEvents();
+        render();
+        bindPublicationRefresh();
+        return;
+      } catch { /* A damaged or incompatible cache is not activated. */ }
+    }
     byId('pageContent').replaceChildren(node('div', language === 'bn' ? 'কনটেন্ট লোড হয়নি। স্থানীয় সার্ভার দিয়ে আবার চেষ্টা করুন।' : 'The preview content could not load. Please open the site through the local server.', 'empty-state'));
   }
+  bindPublicationRefresh();
+}
+
+async function refreshPublication() {
+  if (publicationRefreshPending) return;
+  publicationRefreshPending = true;
+  try {
+  const manifestResponse = await fetch('../firebase/config/demo-manifest.v1.json', { cache: 'no-store' });
+  if (!manifestResponse.ok) throw new Error('Could not load the publication manifest.');
+  const manifest = await manifestResponse.json();
+  validateManifest(manifest);
+  if (activeManifest && manifest.publicationRevision < activeManifest.publicationRevision) throw new Error('The publication revision moved backwards.');
+  const snapshotResponse = await fetch('../firebase/config/demo-publication.v1.json', { cache: 'no-store' });
+  if (!snapshotResponse.ok) throw new Error('Could not load the published snapshot.');
+  const snapshot = await snapshotResponse.json();
+  await validateSnapshot(manifest, snapshot);
+  activatePublication(manifest, snapshot);
+  try { localStorage.setItem(CONTENT_CACHE_KEY, JSON.stringify({ manifest, snapshot })); } catch { /* The active snapshot remains usable if browser storage is full or disabled. */ }
+  } finally {
+    publicationRefreshPending = false;
+  }
+}
+
+function bindPublicationRefresh() {
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible') return;
+    const previousRevision = activeManifest?.publicationRevision;
+    try {
+      await refreshPublication();
+      if (activeManifest?.publicationRevision !== previousRevision) {
+        if (!configuration.catalog.storefronts.some(store => store.id === currentStoreId && store.enabled)) {
+          currentStoreId = configuration.catalog.storefronts.find(store => store.enabled)?.id ?? null;
+        }
+        activeCategoryId = '';
+        render();
+      }
+    } catch { /* Keep the last complete validated snapshot during service or network failure. */ }
+  });
+}
+
+function validateManifest(manifest) {
+  if (manifest?.schemaVersion !== 1 || !Number.isInteger(manifest.publicationRevision) || manifest.publicationRevision < 1 ||
+      !Number.isInteger(manifest.configurationRevision) || !Number.isInteger(manifest.catalogRevision) ||
+      !Array.isArray(manifest.supportedLocales) || !manifest.supportedLocales.length ||
+      !/^[a-f0-9]{64}$/.test(manifest.contentHash || '')) throw new Error('Unsupported publication manifest.');
+}
+
+async function validateSnapshot(manifest, snapshot) {
+  if (snapshot?.schemaVersion !== 1 || snapshot.configuration?.schemaVersion !== 1 ||
+      snapshot.configuration.revision !== manifest.configurationRevision || !Array.isArray(snapshot.products)) {
+    throw new Error('The published snapshot does not match its manifest.');
+  }
+  const canonical = canonicalJson(snapshot);
+  const bytes = new TextEncoder().encode(canonical);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  const actualHash = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('');
+  if (actualHash !== manifest.contentHash) throw new Error('The published snapshot failed its integrity check.');
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  return JSON.stringify(value);
+}
+
+function activatePublication(manifest, snapshot) {
+  configuration = snapshot.configuration;
+  products = snapshot.products;
+  activeManifest = manifest;
+}
+
+function readCachedPublication() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(CONTENT_CACHE_KEY));
+    if (cached?.manifest?.schemaVersion === 1 && cached?.snapshot?.configuration?.revision === cached.manifest.configurationRevision) return cached;
+  } catch { /* Ignore malformed local cache and show the load error. */ }
+  return null;
 }
 
 function bindEvents() {
