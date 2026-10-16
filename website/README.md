@@ -1,6 +1,6 @@
 # LittlePages website preview
 
-This responsive English/Bangla storefront prototype reads a publication manifest and one pinned snapshot from `firebase/config/demo-manifest.v1.json` and `firebase/config/demo-publication.v1.json`. The manifest identifies the configuration and catalogue revisions and carries a SHA-256 hash of the complete snapshot. The browser verifies the snapshot before swapping it into view, keeps the last valid snapshot in local storage, and rechecks the manifest when the tab becomes visible. Navigation, categories, page blocks, and product filtering use the shared IDs and block types used by the Android/admin prototypes.
+This responsive English/Bangla storefront prototype reads a publication manifest and one pinned snapshot from `firebase/config/demo-manifest.v1.json` and `firebase/config/demo-publication.v1.json`. The manifest identifies the configuration and catalogue revisions and carries a SHA-256 hash of the complete snapshot. The browser validates localized fields, supported renderers/blocks, unique IDs, and cross-references before checking the hash and swapping the snapshot into view. It keeps the last valid snapshot in local storage and rechecks the manifest when the tab becomes visible. Navigation, categories, page blocks, and product filtering use the shared IDs and block types used by the Android/admin prototypes.
 
 Serve it from the repository root so browser fetches can reach the shared data files:
 

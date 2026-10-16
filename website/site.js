@@ -86,11 +86,91 @@ async function validateSnapshot(manifest, snapshot) {
       snapshot.configuration.revision !== manifest.configurationRevision || !Array.isArray(snapshot.products)) {
     throw new Error('The published snapshot does not match its manifest.');
   }
+  validatePublicationReferences(manifest, snapshot);
   const canonical = canonicalJson(snapshot);
   const bytes = new TextEncoder().encode(canonical);
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   const actualHash = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('');
   if (actualHash !== manifest.contentHash) throw new Error('The published snapshot failed its integrity check.');
+}
+
+function validatePublicationReferences(manifest, snapshot) {
+  const catalog = snapshot.configuration.catalog;
+  const requiredArrays = ['productTypes', 'storefronts', 'productCategories', 'storePages'];
+  if (!catalog || requiredArrays.some(key => !Array.isArray(catalog[key]))) throw new Error('The snapshot is missing shared catalogue collections.');
+  if (!manifest.supportedLocales.includes('en') || !manifest.supportedLocales.includes('bn')) throw new Error('The publication must include English and Bangla.');
+
+  const uniqueIds = (items, label) => {
+    const ids = items.map(item => item?.id);
+    if (ids.some(id => typeof id !== 'string' || !/^[a-z0-9_-]{2,60}$/.test(id)) || new Set(ids).size !== ids.length) {
+      throw new Error(`${label} IDs are invalid or duplicated.`);
+    }
+    return new Set(ids);
+  };
+  const requireLocalized = (value, label) => {
+    if (!value || typeof value.en !== 'string' || !value.en.trim() || typeof value.bn !== 'string' || !value.bn.trim()) {
+      throw new Error(`${label} needs English and Bangla text.`);
+    }
+  };
+  const typeIds = uniqueIds(catalog.productTypes, 'Product type');
+  const storeIds = uniqueIds(catalog.storefronts, 'Storefront');
+  const categoryIds = uniqueIds(catalog.productCategories, 'Category');
+  const pageIds = uniqueIds(catalog.storePages, 'Page');
+  const productIds = uniqueIds(snapshot.products, 'Product');
+  const enabledTypeIds = new Set(catalog.productTypes.filter(type => type.enabled).map(type => type.id));
+  const enabledPageIds = new Set(catalog.storePages.filter(page => page.enabled).map(page => page.id));
+  const categoryById = new Map(catalog.productCategories.map(category => [category.id, category]));
+  const productById = new Map(snapshot.products.map(product => [product.id, product]));
+
+  catalog.productTypes.forEach(type => {
+    requireLocalized(type.label, `Product type ${type.id}`);
+    if (!['book_v1', 'physical_good_v1'].includes(type.renderer)) throw new Error(`Product type ${type.id} uses an unsupported renderer.`);
+    const attributes = type.attributes ?? [];
+    uniqueIds(attributes, `Attribute on ${type.id}`);
+    attributes.forEach(attribute => {
+      requireLocalized(attribute.label, `Attribute ${attribute.id}`);
+      if (!['text', 'number', 'boolean', 'enum', 'text_list'].includes(attribute.valueType)) throw new Error(`Attribute ${attribute.id} has an unsupported value type.`);
+      if (attribute.valueType === 'enum' && (!Array.isArray(attribute.options) || !attribute.options.length)) throw new Error(`Enum attribute ${attribute.id} has no options.`);
+    });
+  });
+
+  catalog.productCategories.forEach(category => {
+    requireLocalized(category.label, `Category ${category.id}`);
+    if (!storeIds.has(category.storefrontId)) throw new Error(`Category ${category.id} references a missing storefront.`);
+  });
+  catalog.storefronts.forEach(store => {
+    requireLocalized(store.title, `Storefront ${store.id}`);
+    if (!Array.isArray(store.productTypeIds) || !store.productTypeIds.length || store.productTypeIds.some(id => !enabledTypeIds.has(id))) throw new Error(`Storefront ${store.id} references an unsupported product type.`);
+    if ((store.categoryIds ?? []).some(id => !categoryIds.has(id) || categoryById.get(id).storefrontId !== store.id)) throw new Error(`Storefront ${store.id} references an invalid category.`);
+    if (store.landingPageId && (!pageIds.has(store.landingPageId) || !enabledPageIds.has(store.landingPageId))) throw new Error(`Storefront ${store.id} references a missing or disabled page.`);
+  });
+  catalog.storePages.forEach(page => {
+    requireLocalized(page.title, `Page ${page.id}`);
+    if (!Array.isArray(page.blocks)) throw new Error(`Page ${page.id} has no valid block list.`);
+    uniqueIds(page.blocks, `Block on ${page.id}`);
+    page.blocks.forEach(block => {
+      if (!['hero_v1', 'category_rail_v1', 'product_collection_v1', 'editorial_text_v1'].includes(block.type)) throw new Error(`Page ${page.id} contains an unsupported block.`);
+      if (block.type === 'editorial_text_v1') requireLocalized(block.body, `Editorial block ${block.id}`);
+      if (block.type === 'hero_v1' || block.type === 'category_rail_v1' || block.type === 'product_collection_v1') requireLocalized(block.title, `Block ${block.id}`);
+      if ((block.categoryIds ?? []).some(id => !categoryIds.has(id))) throw new Error(`Block ${block.id} references a missing category.`);
+      const storeId = block.query?.storefrontId;
+      if (storeId && !storeIds.has(storeId)) throw new Error(`Block ${block.id} references a missing storefront.`);
+      if ((block.query?.productIds ?? []).some(id => !productIds.has(id))) throw new Error(`Block ${block.id} references a missing product.`);
+      if (block.type === 'product_collection_v1' && !['grid', 'carousel'].includes(block.layout)) throw new Error(`Block ${block.id} has an unsupported collection layout.`);
+    });
+  });
+  snapshot.products.forEach(product => {
+    if (product.status !== 'published') return;
+    requireLocalized(product.title, `Product ${product.id}`);
+    requireLocalized(product.description, `Product ${product.id} description`);
+    if (!enabledTypeIds.has(product.typeId)) throw new Error(`Product ${product.id} uses an unavailable type.`);
+    if ((product.categoryIds ?? []).some(id => !categoryIds.has(id))) throw new Error(`Product ${product.id} references a missing category.`);
+    if (!Array.isArray(product.variants) || !product.variants.length || product.variants.some(variant =>
+      typeof variant.priceMinor !== 'number' || variant.priceMinor < 0 || variant.currency !== 'BDT' ||
+      (variant.stockQuantity != null && (!Number.isInteger(variant.stockQuantity) || variant.stockQuantity < 0)))) {
+      throw new Error(`Product ${product.id} has invalid variants or stock.`);
+    }
+  });
 }
 
 function canonicalJson(value) {

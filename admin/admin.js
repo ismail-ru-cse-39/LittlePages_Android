@@ -105,6 +105,19 @@ function bindEvents() {
     event.currentTarget.reset(); event.currentTarget.hidden = true; render();
   });
   byId('addProductButton').addEventListener('click', () => openProductForm());
+  byId('addProductTypeButton').addEventListener('click', () => { byId('productTypeForm').hidden = false; byId('productTypeForm').elements.labelEn.focus(); });
+  byId('cancelProductTypeButton').addEventListener('click', () => { byId('productTypeForm').reset(); byId('productTypeForm').hidden = true; });
+  byId('productTypeForm').addEventListener('submit', event => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const labelEn = String(data.get('labelEn') || '').trim(); const labelBn = String(data.get('labelBn') || '').trim();
+    const renderer = String(data.get('renderer') || 'book_v1');
+    const id = slug(labelEn) || newId('type');
+    const template = config.catalog.productTypes.find(type => type.renderer === renderer);
+    if (!labelEn || !labelBn || !template || config.catalog.productTypes.some(type => type.id === id)) return;
+    config.catalog.productTypes.push({ id, label: { en: labelEn, bn: labelBn }, renderer, schemaVersion: 1, enabled: true, attributes: clone(template.attributes ?? []) });
+    event.currentTarget.reset(); event.currentTarget.hidden = true; render();
+  });
   byId('cancelProductButton').addEventListener('click', () => { byId('productForm').reset(); byId('productForm').hidden = true; });
   byId('productForm').addEventListener('submit', saveProduct);
   byId('productForm').elements.typeId.addEventListener('change', () => renderAttributeFields());
@@ -136,6 +149,8 @@ function bindEvents() {
     config.catalog.storePages.push(page); selectedPageId = page.id; render(); byId('pageTitleInput').focus(); byId('pageTitleInput').select();
   });
   byId('pageTitleInput').addEventListener('input', event => { const page = selectedPage(); if (page) page.title.en = event.target.value; });
+  byId('pageTitleBnInput').addEventListener('input', event => { const page = selectedPage(); if (page) page.title.bn = event.target.value; });
+  byId('pageEnabledInput').addEventListener('change', event => { const page = selectedPage(); if (page) { page.enabled = event.target.checked; renderPages(); renderStores(); } });
   byId('addBlockButton').addEventListener('click', addBlock);
   byId('publishButton').addEventListener('click', () => { renderValidation(); byId('publishDialog').showModal(); });
   byId('closeDialogButton').addEventListener('click', () => byId('publishDialog').close());
@@ -285,7 +300,8 @@ function renderPages() {
   pages.forEach(page => { const option = document.createElement('option'); option.value = page.id; option.textContent = page.title.en; select.append(option); });
   if (!pages.some(page => page.id === selectedPageId)) selectedPageId = pages[0]?.id ?? '';
   select.value = selectedPageId;
-  const page = selectedPage(); byId('pageTitleInput').value = page?.title.en ?? '';
+  const page = selectedPage(); byId('pageTitleInput').value = page?.title.en ?? ''; byId('pageTitleBnInput').value = page?.title.bn ?? '';
+  byId('pageEnabledInput').checked = Boolean(page?.enabled); byId('pageEnabledInput').disabled = !page;
   const blocks = byId('blockList'); blocks.replaceChildren();
   (page?.blocks ?? []).forEach((block, index) => {
     const row = document.createElement('li'); row.className = 'block-card';
@@ -303,13 +319,58 @@ function renderPages() {
     });
     row.append(controls); blocks.append(row);
   });
+  renderBlockEditors(page);
+}
+
+function renderBlockEditors(page) {
+  const root = byId('blockEditorList'); root.replaceChildren();
+  if (!page?.blocks?.length) { root.append(text('div', 'Add a block above to edit its English and Bangla content.', 'empty-state')); return; }
+  page.blocks.forEach((block, index) => {
+    const card = document.createElement('fieldset'); card.className = 'block-editor-card';
+    const legend = document.createElement('legend'); legend.textContent = `${index + 1}. ${blockName(block.type)}`; card.append(legend);
+    const localizedKey = block.type === 'editorial_text_v1' ? 'body' : 'title';
+    if (block.type === 'editorial_text_v1' || block.type === 'hero_v1' || block.type === 'category_rail_v1' || block.type === 'product_collection_v1') {
+      block[localizedKey] ??= { en: '', bn: '' };
+      for (const [locale, labelText] of [['en', 'English'], ['bn', 'বাংলা']]) {
+        const label = document.createElement('label'); label.textContent = `${labelText} ${block.type === 'editorial_text_v1' ? 'message' : 'title'}`;
+        const input = block.type === 'editorial_text_v1' ? document.createElement('textarea') : document.createElement('input');
+        input.maxLength = block.type === 'editorial_text_v1' ? 1000 : 120; input.value = block[localizedKey][locale] ?? '';
+        input.addEventListener('input', () => { block[localizedKey][locale] = input.value; }); label.append(input); card.append(label);
+      }
+    }
+    if (block.type === 'product_collection_v1') {
+      const query = document.createElement('label'); query.textContent = 'Product storefront';
+      const select = document.createElement('select'); const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'All storefront products'; select.append(empty);
+      config.catalog.storefronts.forEach(store => { const option = document.createElement('option'); option.value = store.id; option.textContent = store.title.en; select.append(option); });
+      select.value = block.query?.storefrontId ?? ''; select.addEventListener('change', () => { block.query ??= {}; if (select.value) block.query.storefrontId = select.value; else delete block.query.storefrontId; }); query.append(select); card.append(query);
+      const layoutLabel = document.createElement('label'); layoutLabel.textContent = 'Layout'; const layout = document.createElement('select');
+      [['grid', 'Grid'], ['carousel', 'Carousel']].forEach(([value, title]) => { const option = document.createElement('option'); option.value = value; option.textContent = title; layout.append(option); });
+      layout.value = block.layout === 'carousel' ? 'carousel' : 'grid'; layout.addEventListener('change', () => { block.layout = layout.value; }); layoutLabel.append(layout); card.append(layoutLabel);
+    }
+    if (block.type === 'category_rail_v1') {
+      const categoryLabel = document.createElement('label'); categoryLabel.textContent = 'Categories (leave empty to show all enabled categories)';
+      const select = document.createElement('select'); select.multiple = true; select.size = Math.min(5, Math.max(2, config.catalog.productCategories.length));
+      config.catalog.productCategories.forEach(category => { const option = document.createElement('option'); option.value = category.id; option.textContent = `${category.label.en} · ${storeTitle(category.storefrontId)}`; option.selected = (block.categoryIds ?? []).includes(category.id); select.append(option); });
+      select.addEventListener('change', () => { block.categoryIds = [...select.selectedOptions].map(option => option.value); }); categoryLabel.append(select); card.append(categoryLabel);
+    }
+    root.append(card);
+  });
 }
 
 function renderProductTypes() {
   const list = byId('productTypeList'); list.replaceChildren();
-  config.catalog.productTypes.forEach(type => {
-    const card = document.createElement('div'); card.className = 'type-card'; card.append(text('span', type.renderer === 'book_v1' ? '▤' : '◇', 'store-icon'));
-    const details = text('div', type.label.en); details.className = 'store-name'; details.append(text('small', `${type.renderer} · supported template`)); card.append(details); list.append(card);
+  config.catalog.productTypes.forEach((type, index) => {
+    const card = document.createElement('div'); card.className = `type-card${type.enabled ? '' : ' archived'}`; card.append(text('span', type.renderer === 'book_v1' ? '▤' : '◇', 'store-icon'));
+    const details = text('div', type.label.en, 'store-name'); details.append(text('small', `${type.label.bn} · ${type.renderer} · ${type.enabled ? 'Enabled' : 'Disabled'}`)); card.append(details);
+    const actions = document.createElement('div'); actions.className = 'entity-actions';
+    const rename = text('button', 'Rename'); rename.type = 'button'; rename.addEventListener('click', () => {
+      const labelEn = window.prompt('Product type name in English', type.label.en)?.trim(); if (!labelEn) return;
+      const labelBn = window.prompt('Product type name in Bangla', type.label.bn)?.trim(); if (!labelBn) return;
+      type.label = { en: labelEn, bn: labelBn }; render();
+    }); actions.append(rename);
+    [['↑', -1], ['↓', 1]].forEach(([label, delta]) => { const move = text('button', label); move.type = 'button'; move.disabled = index + Number(delta) < 0 || index + Number(delta) >= config.catalog.productTypes.length; move.setAttribute('aria-label', `Move ${type.label.en} ${Number(delta) < 0 ? 'up' : 'down'}`); move.addEventListener('click', () => { const target = index + Number(delta); [config.catalog.productTypes[index], config.catalog.productTypes[target]] = [config.catalog.productTypes[target], config.catalog.productTypes[index]]; render(); }); actions.append(move); });
+    const toggle = text('button', type.enabled ? 'Disable' : 'Enable', 'remove-button'); toggle.type = 'button'; toggle.addEventListener('click', () => { type.enabled = !type.enabled; render(); }); actions.append(toggle);
+    card.append(actions); list.append(card);
   });
   const storeType = byId('storeForm').elements.typeId;
   const productType = byId('productForm').elements.typeId;
