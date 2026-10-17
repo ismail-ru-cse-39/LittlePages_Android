@@ -118,6 +118,7 @@ Resolve these decisions before connecting payments, publishing content, or colle
 - [x] Android storefront read subtask: restore the last valid full snapshot from app-private cache before remote refresh.
 - [x] Android storefront read subtask: validate supported schema/locales, revision relationships, IDs, and cross references before activation.
 - [x] Android storefront read subtask: reject stale publications and reject content-hash changes within the same publication revision.
+- [x] Android storefront read subtask: enforce the manifest's numeric minimum Android client version before activating remote or cached content.
 - [x] Android storefront read subtask: persist a full validated snapshot before exposing it atomically to the app UI.
 - [x] Android storefront read subtask: refresh after a Firestore manifest snapshot change.
 - [x] Android storefront read subtask: retry the remote refresh when validated network connectivity returns.

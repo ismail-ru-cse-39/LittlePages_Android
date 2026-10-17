@@ -193,7 +193,8 @@ fun LittlePagesApp() {
                 VersionedStorefrontConfigurationRepository(
                     remote = FirestorePublishedStorefrontConfigurationRemote(FirebaseFirestore.getInstance(), cache),
                     cache = cache,
-                    fallback = preview.configuration.value
+                    fallback = preview.configuration.value,
+                    androidClientVersion = BuildConfig.VERSION_NAME
                 )
             }.getOrElse { preview }
         }

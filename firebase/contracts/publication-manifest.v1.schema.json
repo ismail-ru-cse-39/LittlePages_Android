@@ -17,7 +17,7 @@
     "minimumClientVersions": {
       "type": "object",
       "properties": {
-        "android": { "type": "string", "maxLength": 32 },
+        "android": { "type": "string", "maxLength": 32, "pattern": "^[0-9]+(\\.[0-9]+){0,2}$" },
         "ios": { "type": "string", "maxLength": 32 },
         "web": { "type": "string", "maxLength": 32 }
       },

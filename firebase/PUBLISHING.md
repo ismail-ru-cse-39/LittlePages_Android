@@ -18,7 +18,7 @@ The manifest is the shared revision pointer. It is validated and published only 
 1. Each app/site fetches the manifest and records the revision currently displayed.
 2. While foregrounded, the client listens for changes to the small manifest document using Firestore's snapshot listener. It also revalidates on Android/iOS resume, website visibility, and network reconnection in case a notification was missed.
 3. After the manifest changes, the client fetches the full content snapshot pinned to those revision IDs.
-4. The client validates schema version, block types, product type renderer IDs, and minimum client version before switching its active snapshot.
+4. The client validates schema version, block types, product type renderer IDs, and minimum client version before switching its active snapshot. Android compares numeric `major.minor.patch` versions (one to three numeric components); an incompatible publication is rejected and the app keeps its bundled preview or last compatible snapshot.
 5. It swaps snapshots atomically after all needed data is available. On network failure or unsupported data, it keeps the last valid cached revision and reports the issue; it never displays a partially applied publish.
 6. A newly published change becomes visible across connected clients after they receive and activate that revision. Offline clients update when they reconnect. No remote system can force an already-offline device to refresh.
 

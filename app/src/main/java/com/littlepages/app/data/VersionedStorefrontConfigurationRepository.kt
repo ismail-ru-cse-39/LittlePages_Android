@@ -52,7 +52,8 @@ sealed interface ConfigurationRefreshResult {
 class VersionedStorefrontConfigurationRepository(
     private val remote: PublishedStorefrontConfigurationRemote,
     private val cache: StorefrontConfigurationCache,
-    fallback: CatalogConfiguration
+    fallback: CatalogConfiguration,
+    private val androidClientVersion: String
 ) : PublishedStorefrontContentSource {
     private val _configuration = MutableStateFlow(fallback)
     private val _publishedContent = MutableStateFlow<VersionedStorefrontSnapshot?>(null)
@@ -120,6 +121,8 @@ class VersionedStorefrontConfigurationRepository(
         if (manifest.publicationRevision < 1 || manifest.catalogRevision < 1 || manifest.configurationRevision != config.revision) return false
         if (manifest.supportedLocales.isEmpty() || manifest.supportedLocales.any { it !in SUPPORTED_LOCALES }) return false
         if (!manifest.contentHash.matches(Regex("^[a-f0-9]{64}$"))) return false
+        val minimumAndroidVersion = manifest.minimumClientVersions[ANDROID_PLATFORM]
+        if (minimumAndroidVersion != null && !meetsMinimumVersion(androidClientVersion, minimumAndroidVersion)) return false
         if (config.productTypes.map { it.id }.toSet().size != config.productTypes.size) return false
         if (config.storefronts.map { it.id }.toSet().size != config.storefronts.size) return false
         if (config.storePages.map { it.id }.toSet().size != config.storePages.size) return false
@@ -166,8 +169,26 @@ class VersionedStorefrontConfigurationRepository(
         return storesValid && pagesValid && productsValid && productIds.size == snapshot.products.size
     }
 
+    private fun meetsMinimumVersion(currentVersion: String, minimumVersion: String): Boolean {
+        fun parse(version: String): List<Int>? {
+            if (!VERSION_PATTERN.matches(version)) return null
+            val parts = version.split('.').map { it.toIntOrNull() ?: return null }.toMutableList()
+            while (parts.size < 3) parts += 0
+            return parts
+        }
+
+        val current = parse(currentVersion) ?: return false
+        val minimum = parse(minimumVersion) ?: return false
+        for (index in 0..2) {
+            if (current[index] != minimum[index]) return current[index] > minimum[index]
+        }
+        return true
+    }
+
     private companion object {
         const val SUPPORTED_SCHEMA_VERSION = 1
+        const val ANDROID_PLATFORM = "android"
+        val VERSION_PATTERN = Regex("^[0-9]+(?:\\.[0-9]+){0,2}$")
         val SUPPORTED_LOCALES = setOf("en", "bn")
     }
 }
