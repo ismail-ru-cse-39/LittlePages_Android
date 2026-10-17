@@ -1243,7 +1243,7 @@ private fun ParentScreen(guest: Boolean, previewAccount: Boolean, authenticated:
         if (guest) {
             AppText("Create an account to save your reading progress across devices, order books, and join the parent community.", color = PagesColors.Muted)
             PrimaryButton("Create a parent account", Icons.Filled.AccountCircle, onCreateAccount)
-            OutlineButton("Sign in", Icons.Filled.Login, onCreateAccount)
+            OutlineButton("Sign in", Icons.AutoMirrored.Filled.Login, onCreateAccount)
         } else {
             SectionTitle(stringResource(R.string.family_section))
             SettingsRow(Icons.Filled.ChildCare, stringResource(R.string.child_profiles), child?.let { "${it.nickname} · ${it.ageBand}" } ?: "Add a child profile", onProfiles)
