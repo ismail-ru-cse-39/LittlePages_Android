@@ -27,7 +27,9 @@ require(firebaseEnvironment in setOf("development", "staging", "production")) {
 val firebaseProjectId = environmentProperty("firebase.$firebaseEnvironment.projectId")
 val firebaseApplicationId = environmentProperty("firebase.$firebaseEnvironment.appId")
 val firebaseApiKey = environmentProperty("firebase.$firebaseEnvironment.apiKey")
-val firebaseConfigured = firebaseProjectId.isNotBlank() && firebaseApplicationId.isNotBlank() && firebaseApiKey.isNotBlank()
+val firebaseSenderId = environmentProperty("firebase.$firebaseEnvironment.messagingSenderId")
+val firebaseConfigured = firebaseProjectId.isNotBlank() && firebaseApplicationId.isNotBlank() &&
+    firebaseApiKey.isNotBlank() && firebaseSenderId.isNotBlank()
 
 android {
     namespace = "com.littlepages.app"
@@ -43,6 +45,7 @@ android {
         buildConfigField("String", "FIREBASE_PROJECT_ID", asBuildConfigString(firebaseProjectId))
         buildConfigField("String", "FIREBASE_APP_ID", asBuildConfigString(firebaseApplicationId))
         buildConfigField("String", "FIREBASE_API_KEY", asBuildConfigString(firebaseApiKey))
+        buildConfigField("String", "FIREBASE_MESSAGING_SENDER_ID", asBuildConfigString(firebaseSenderId))
         buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString())
     }
 
@@ -54,6 +57,10 @@ android {
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
+    val firebaseBom = platform("com.google.firebase:firebase-bom:34.19.0")
+    implementation(firebaseBom)
+    implementation("com.google.firebase:firebase-auth")
+    implementation("com.google.firebase:firebase-firestore")
     implementation(composeBom)
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.compose.ui:ui")

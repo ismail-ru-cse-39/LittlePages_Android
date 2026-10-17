@@ -5,6 +5,7 @@ local.properties
 *.iml
 
 # Firebase project-specific client configuration and private credentials
+/google-services.json
 app/src/**/google-services.json
 firebase/firebase-adminsdk*.json
 firebase/service-account*.json
