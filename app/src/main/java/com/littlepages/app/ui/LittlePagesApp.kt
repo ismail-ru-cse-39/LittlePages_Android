@@ -67,6 +67,9 @@ import com.littlepages.app.data.NarrationState
 import com.littlepages.app.data.SamplePdfRenderer
 import com.littlepages.app.data.ManagedCategory
 import com.littlepages.app.data.PreviewCatalogConfigurationSource
+import com.littlepages.app.data.FirestorePublishedStorefrontConfigurationRemote
+import com.littlepages.app.data.SharedPreferencesStorefrontConfigurationCache
+import com.littlepages.app.data.VersionedStorefrontConfigurationRepository
 import com.littlepages.app.AppLanguage
 import com.littlepages.app.BuildConfig
 import com.littlepages.app.R
@@ -80,6 +83,7 @@ import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.PhoneAuthOptions
 import com.google.firebase.auth.PhoneAuthProvider
+import com.google.firebase.firestore.FirebaseFirestore
 import com.littlepages.app.ui.components.*
 import com.littlepages.app.ui.theme.PagesColors
 import com.littlepages.app.ui.theme.PagesBreakpoints
@@ -176,9 +180,49 @@ fun LittlePagesApp() {
         firebaseAuth.addAuthStateListener(listener)
         onDispose { firebaseAuth.removeAuthStateListener(listener) }
     }
-    val configurationSource = remember { PreviewCatalogConfigurationSource() }
-    val managedConfiguration by configurationSource.configuration.collectAsState()
+    val coroutineScope = rememberCoroutineScope()
     val activity = appContext as? Activity
+    val configurationSource = remember(appContext) {
+        val preview = PreviewCatalogConfigurationSource()
+        if (!BuildConfig.FIREBASE_CONFIGURED) {
+            preview
+        } else {
+            runCatching {
+                val cache = SharedPreferencesStorefrontConfigurationCache(appContext)
+                VersionedStorefrontConfigurationRepository(
+                    remote = FirestorePublishedStorefrontConfigurationRemote(FirebaseFirestore.getInstance(), cache),
+                    cache = cache,
+                    fallback = preview.configuration.value
+                )
+            }.getOrElse { preview }
+        }
+    }
+    LaunchedEffect(configurationSource) {
+        (configurationSource as? VersionedStorefrontConfigurationRepository)?.initialize()
+    }
+    DisposableEffect(configurationSource, activity) {
+        val repository = configurationSource as? VersionedStorefrontConfigurationRepository
+        if (repository == null || !BuildConfig.FIREBASE_CONFIGURED) {
+            return@DisposableEffect onDispose { }
+        }
+        var receivedInitialManifest = false
+        val manifestListener = FirebaseFirestore.getInstance()
+            .collection("publicConfiguration")
+            .document("current")
+            .addSnapshotListener { snapshot, error ->
+                if (error == null && snapshot != null) {
+                    if (receivedInitialManifest) {
+                        coroutineScope.launch { repository.refresh() }
+                    } else {
+                        receivedInitialManifest = true
+                    }
+                }
+            }
+        onDispose {
+            manifestListener.remove()
+        }
+    }
+    val managedConfiguration by configurationSource.configuration.collectAsState()
     val systemAnimationsEnabled = ValueAnimator.areAnimatorsEnabled()
     var hasInternet by remember(appContext) { mutableStateOf(true) }
     DisposableEffect(appContext) {
@@ -197,8 +241,14 @@ fun LittlePagesApp() {
             }
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
                 if (currentNetwork == network) {
+                    val wasConnected = hasInternet
                     hasInternet = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
                         capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                    if (!wasConnected && hasInternet) {
+                        (configurationSource as? VersionedStorefrontConfigurationRepository)?.let { repository ->
+                            coroutineScope.launch { repository.refresh() }
+                        }
+                    }
                 }
             }
         }
@@ -221,7 +271,6 @@ fun LittlePagesApp() {
     val offlineBookTitles = remember { mutableStateListOf(books[0].title, books[1].title) }
     val purchaseHistory = remember { mutableStateListOf<PurchasePreview>() }
     val savedBooks = remember { mutableStateListOf<String>() }
-    val coroutineScope = rememberCoroutineScope()
     val page = stack.last()
     fun go(next: Page) { stack.add(next) }
     fun back() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }

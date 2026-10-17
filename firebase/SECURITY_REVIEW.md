@@ -2,7 +2,7 @@
 
 ## Current state
 
-`firestore.rules` and `storage.rules` deny all client reads and writes. This is the safe state while projects, identities, ownership rules, and publication flows are unconfigured. Do not relax these rules to make the local preview work. The deny-all rules are not evidence that the complete backend is secure; they mean no Firebase client integration is available yet.
+`firestore.rules` now permits unauthenticated reads only for `publicConfiguration/current`, numeric immutable `configurationRevisions`, and product documents beneath numeric `catalogRevisions`. Client writes and all other reads remain denied. This narrow public read surface supports guest storefront browsing; it is safe only if the trusted publisher places public data in these immutable revision paths and never puts drafts or private assets there. `storage.rules` still deny all client access. These rules have not been emulator-tested or deployed, and Firestore reads will continue to fail under the currently deployed deny-all rules until you deploy the reviewed file.
 
 ## Required authorization boundaries
 
@@ -27,6 +27,6 @@ This is a design target for the trusted admin service, not an implemented grant 
 
 Prefer separate publisher and moderator assignments. Staff identity changes, role grants/revocations, publication, rollback, moderation decisions, and policy changes must create immutable audit events with actor UID, action, target, timestamp, request/correlation ID, and before/after revision references where applicable. High-impact operations should require reauthentication or an approval step selected by the security owner.
 
-## Before rules can be authored and deployed
+## Before rules can be deployed
 
-Confirm the collection layout, staff identity source, role lifecycle, parent/child ownership model, moderation visibility states, App Check registrations, and Storage upload flow. Then implement least-privilege rules, add Firebase Emulator Suite rule tests, review the rules with the security owner, and deploy to development first. Keep the Phase 3 security task unchecked until those steps pass.
+Confirm the collection layout, staff identity source, role lifecycle, parent/child ownership model, moderation visibility states, App Check registrations, and Storage upload flow. Add Firebase Emulator Suite rule tests, review the rules with the security owner, and deploy to development first. The current rules only unlock public published storefront reads; they do not implement the remaining authenticated user, staff, or Storage rules. Keep the Phase 3 security task unchecked until those steps pass.

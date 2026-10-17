@@ -22,6 +22,8 @@ The manifest is the shared revision pointer. It is validated and published only 
 5. It swaps snapshots atomically after all needed data is available. On network failure or unsupported data, it keeps the last valid cached revision and reports the issue; it never displays a partially applied publish.
 6. A newly published change becomes visible across connected clients after they receive and activate that revision. Offline clients update when they reconnect. No remote system can force an already-offline device to refresh.
 
+**Current Android status:** the app fetches at startup, listens to `publicConfiguration/current`, and refreshes after a validated network reconnection. Revalidation on foreground resume and equivalent iOS/web listeners are still pending. Firestore rules and published records must be deployed before the remote flow can be exercised; until then the Android repository uses its bundled preview or last valid cache.
+
 Public catalogue/content reads may be cached by revision. Account, child data, entitlement, checkout, inventory reservation, payment verification, and moderation actions use authenticated trusted services and are never authorized by the manifest or client cache.
 
 ## Admin write API contract

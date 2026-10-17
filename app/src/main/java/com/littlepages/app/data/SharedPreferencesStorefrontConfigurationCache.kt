@@ -38,6 +38,17 @@ class SharedPreferencesStorefrontConfigurationCache(context: Context) : Storefro
         products = json.getJSONArray("products").objects().map(::decodeProduct)
     )
 
+    /** Converts the documented Firestore client projection through the same strict cache decoder. */
+    internal fun decodeFirestoreSnapshot(
+        manifest: Map<String, Any?>,
+        configuration: Map<String, Any?>,
+        products: List<Map<String, Any?>>
+    ): VersionedStorefrontSnapshot = decodeSnapshot(JSONObject().apply {
+        put("manifest", JSONObject(manifest))
+        put("configuration", JSONObject(configuration))
+        put("products", JSONArray().apply { products.forEach { put(JSONObject(it)) } })
+    })
+
     private fun encodeManifest(manifest: PublishedContentManifest) = JSONObject().apply {
         put("schemaVersion", manifest.schemaVersion)
         put("publicationRevision", manifest.publicationRevision)
@@ -55,7 +66,7 @@ class SharedPreferencesStorefrontConfigurationCache(context: Context) : Storefro
         catalogRevision = json.getLong("catalogRevision"),
         supportedLocales = json.getJSONArray("supportedLocales").strings().toSet(),
         contentHash = json.getString("contentHash"),
-        minimumClientVersions = json.getJSONObject("minimumClientVersions").stringMap()
+        minimumClientVersions = (json.optJSONObject("minimumClientVersions") ?: JSONObject()).stringMap()
     )
 
     private fun encodeConfiguration(config: CatalogConfiguration) = JSONObject().apply {
