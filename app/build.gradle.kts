@@ -28,6 +28,7 @@ val firebaseProjectId = environmentProperty("firebase.$firebaseEnvironment.proje
 val firebaseApplicationId = environmentProperty("firebase.$firebaseEnvironment.appId")
 val firebaseApiKey = environmentProperty("firebase.$firebaseEnvironment.apiKey")
 val firebaseSenderId = environmentProperty("firebase.$firebaseEnvironment.messagingSenderId")
+val firebaseWebClientId = environmentProperty("firebase.$firebaseEnvironment.webClientId")
 val firebaseConfigured = firebaseProjectId.isNotBlank() && firebaseApplicationId.isNotBlank() &&
     firebaseApiKey.isNotBlank() && firebaseSenderId.isNotBlank()
 
@@ -46,6 +47,7 @@ android {
         buildConfigField("String", "FIREBASE_APP_ID", asBuildConfigString(firebaseApplicationId))
         buildConfigField("String", "FIREBASE_API_KEY", asBuildConfigString(firebaseApiKey))
         buildConfigField("String", "FIREBASE_MESSAGING_SENDER_ID", asBuildConfigString(firebaseSenderId))
+        buildConfigField("String", "FIREBASE_WEB_CLIENT_ID", asBuildConfigString(firebaseWebClientId))
         buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString())
     }
 
@@ -61,6 +63,9 @@ dependencies {
     implementation(firebaseBom)
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
     implementation(composeBom)
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.compose.ui:ui")

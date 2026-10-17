@@ -39,6 +39,11 @@ import androidx.compose.material3.Text as MaterialText
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.ClearCredentialStateRequest
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialException
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,7 +68,18 @@ import com.littlepages.app.data.SamplePdfRenderer
 import com.littlepages.app.data.ManagedCategory
 import com.littlepages.app.data.PreviewCatalogConfigurationSource
 import com.littlepages.app.AppLanguage
+import com.littlepages.app.BuildConfig
 import com.littlepages.app.R
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.firebase.FirebaseException
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthException
+import com.google.firebase.auth.FirebaseAuthUserCollisionException
+import com.google.firebase.auth.AuthCredential
+import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.auth.PhoneAuthOptions
+import com.google.firebase.auth.PhoneAuthProvider
 import com.littlepages.app.ui.components.*
 import com.littlepages.app.ui.theme.PagesColors
 import com.littlepages.app.ui.theme.PagesBreakpoints
@@ -75,9 +91,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.TimeUnit
 
 private enum class Page {
-    Welcome, EmailAuth, PasswordReset, PhoneAuth, PhoneCode, ParentSetup, Home, Library, Search, BookDetails, Reader, Listen, ListenPreview,
+    Welcome, EmailAuth, EmailVerification, PasswordReset, PhoneAuth, PhoneCode, ParentSetup, Home, Library, Search, BookDetails, Reader, Listen, ListenPreview,
     Community, Group, CreatePost, Reviews, Offline, Parent, Profiles, Privacy, Subscription,
     Checkout, OrderConfirmation, Recovery, Orders, Support
 }
@@ -95,6 +112,22 @@ private data class CommunityEntry(val body: String, val imageUri: android.net.Ur
 private data class ChildProfile(val nickname: String, val ageBand: String, val id: String = "${nickname.lowercase()}-${ageBand.filter(Char::isDigit)}")
 private data class PurchasePreview(val id: String, val bookTitle: String, val format: String, val paymentMethod: String, val fullName: String = "", val address: String = "", val phone: String = "")
 
+private fun firebaseAuthError(error: Exception?): String = when ((error as? FirebaseAuthException)?.errorCode) {
+    "ERROR_INVALID_EMAIL" -> "Enter a valid email address."
+    "ERROR_INVALID_CREDENTIAL", "ERROR_WRONG_PASSWORD", "ERROR_USER_NOT_FOUND" -> "Email or password is incorrect."
+    "ERROR_INVALID_VERIFICATION_CODE" -> "That SMS code is incorrect. Check it and try again."
+    "ERROR_SESSION_EXPIRED" -> "That SMS code expired. Request another code."
+    "ERROR_INVALID_PHONE_NUMBER" -> "Enter a valid Bangladesh mobile number with the +880 country code."
+    "ERROR_QUOTA_EXCEEDED" -> "SMS verification is temporarily limited. Try again later."
+    "ERROR_ACCOUNT_EXISTS_WITH_DIFFERENT_CREDENTIAL", "ERROR_CREDENTIAL_ALREADY_IN_USE" -> "This account already uses another sign-in method. Sign in with that method."
+    "ERROR_EMAIL_ALREADY_IN_USE" -> "An account already uses this email. Sign in instead."
+    "ERROR_WEAK_PASSWORD" -> "Choose a stronger password with at least 8 characters."
+    "ERROR_OPERATION_NOT_ALLOWED" -> "Email and password sign-in is not enabled for this Firebase project."
+    "ERROR_TOO_MANY_REQUESTS" -> "Too many attempts. Wait a little and try again."
+    "ERROR_NETWORK_REQUEST_FAILED" -> "Check your internet connection and try again."
+    else -> "Check your connection and Firebase Authentication settings, then try again."
+}
+
 @Composable
 fun LittlePagesApp() {
     val navigationStackSaver = remember {
@@ -109,6 +142,8 @@ fun LittlePagesApp() {
     var premium by remember { mutableStateOf(false) }
     var premiumPrompt by remember { mutableStateOf(false) }
     var unavailableNotice by remember { mutableStateOf<String?>(null) }
+    var noticeTitle by remember { mutableStateOf("Not available yet") }
+    var authBusy by remember { mutableStateOf(false) }
     var recoveryType by remember { mutableStateOf("book") }
     var phoneNumber by remember { mutableStateOf("") }
     var pendingParentEmail by remember { mutableStateOf("") }
@@ -121,6 +156,26 @@ fun LittlePagesApp() {
     val useNavigationRail = appConfiguration.screenWidthDp >= PagesBreakpoints.WideLayoutWidth.value.toInt()
     val mainTabs = listOf(Page.Home, Page.Library, Page.Community, Page.Parent, Page.Offline)
     val appContext = LocalContext.current
+    val firebaseAuth = remember(appContext) {
+        if (BuildConfig.FIREBASE_CONFIGURED) runCatching { FirebaseAuth.getInstance() }.getOrNull() else null
+    }
+    var firebaseUser by remember(firebaseAuth) { mutableStateOf(firebaseAuth?.currentUser) }
+    var pendingVerificationEmail by rememberSaveable { mutableStateOf("") }
+    var verificationId by rememberSaveable { mutableStateOf<String?>(null) }
+    var phoneResendToken by remember { mutableStateOf<PhoneAuthProvider.ForceResendingToken?>(null) }
+    var phoneRequestNumber by rememberSaveable { mutableStateOf("") }
+    var newEmailAccountNeedsSetup by rememberSaveable { mutableStateOf(false) }
+    var pendingAccountLinkCredential by remember { mutableStateOf<AuthCredential?>(null) }
+    val isAuthenticatedUser = firebaseUser?.let { user ->
+        user.email == null || user.isEmailVerified || user.providerData.any { it.providerId == GoogleAuthProvider.PROVIDER_ID }
+    } == true
+    val authenticatedEmail = firebaseUser?.takeIf { isAuthenticatedUser }?.email
+    DisposableEffect(firebaseAuth) {
+        if (firebaseAuth == null) return@DisposableEffect onDispose { }
+        val listener = FirebaseAuth.AuthStateListener { firebaseUser = it.currentUser }
+        firebaseAuth.addAuthStateListener(listener)
+        onDispose { firebaseAuth.removeAuthStateListener(listener) }
+    }
     val configurationSource = remember { PreviewCatalogConfigurationSource() }
     val managedConfiguration by configurationSource.configuration.collectAsState()
     val activity = appContext as? Activity
@@ -166,9 +221,193 @@ fun LittlePagesApp() {
     val offlineBookTitles = remember { mutableStateListOf(books[0].title, books[1].title) }
     val purchaseHistory = remember { mutableStateListOf<PurchasePreview>() }
     val savedBooks = remember { mutableStateListOf<String>() }
+    val coroutineScope = rememberCoroutineScope()
     val page = stack.last()
     fun go(next: Page) { stack.add(next) }
     fun back() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
+    fun showNotice(title: String, message: String) { noticeTitle = title; unavailableNotice = message }
+    fun signOutFromAuth() {
+        firebaseAuth?.signOut()
+        coroutineScope.launch {
+            runCatching { CredentialManager.create(appContext).clearCredentialState(ClearCredentialStateRequest()) }
+        }
+    }
+    fun sendCurrentEmailVerification() {
+        val user = firebaseAuth?.currentUser
+        if (user == null) {
+            showNotice("Verification unavailable", "Sign in again to request a verification email.")
+            return
+        }
+        authBusy = true
+        firebaseAuth?.useAppLanguage()
+        user.sendEmailVerification().addOnCompleteListener { task ->
+            authBusy = false
+            if (task.isSuccessful) {
+                pendingVerificationEmail = user.email.orEmpty()
+                stack.clear(); stack.add(Page.EmailVerification)
+                showNotice("Verification email sent", "Open the link we emailed to ${user.email.orEmpty()}, then return here and tap ‘I’ve verified’. Check your spam folder if it doesn’t arrive.")
+            } else showNotice("Couldn’t send verification email", firebaseAuthError(task.exception))
+        }
+    }
+    fun runAuth(operation: (FirebaseAuth) -> com.google.android.gms.tasks.Task<*>, onSuccess: () -> Unit = {}) {
+        val auth = firebaseAuth
+        if (auth == null) {
+            showNotice("Firebase isn’t configured", "Add the Firebase Android configuration for this build before using email accounts.")
+            return
+        }
+        authBusy = true
+        runCatching { operation(auth).addOnCompleteListener { task ->
+            authBusy = false
+            if (task.isSuccessful) onSuccess() else showNotice("Couldn’t complete that request", firebaseAuthError(task.exception))
+        } }.onFailure {
+            authBusy = false
+            showNotice("Couldn’t complete that request", firebaseAuthError(it as? Exception))
+        }
+    }
+    fun enterAuthenticatedHome() {
+        parentPreviewMode = false; guestMode = false; stack.clear(); stack.add(Page.Home)
+    }
+    fun finishEmailSignIn() {
+        val user = firebaseAuth?.currentUser
+        val credential = pendingAccountLinkCredential
+        if (user != null && credential != null) {
+            authBusy = true
+            user.linkWithCredential(credential).addOnCompleteListener { task ->
+                authBusy = false
+                if (task.isSuccessful) {
+                    pendingAccountLinkCredential = null
+                    firebaseUser = task.result.user
+                    enterAuthenticatedHome()
+                } else showNotice("Couldn’t link sign-in methods", firebaseAuthError(task.exception))
+            }
+        } else enterAuthenticatedHome()
+    }
+    fun handleAccountCollision(error: Exception?, method: String): Boolean {
+        val collision = error as? FirebaseAuthUserCollisionException ?: return false
+        val credential = collision.updatedCredential ?: return false
+        pendingAccountLinkCredential = credential
+        showNotice("This account already exists", "Sign in with the existing email and password. We’ll link $method to that account after you sign in.")
+        return true
+    }
+    fun returnToWelcome(signOut: Boolean) {
+        if (signOut) signOutFromAuth()
+        guestMode = false; parentPreviewMode = false; stack.clear(); stack.add(Page.Welcome)
+    }
+    fun finishPhoneSignIn(result: com.google.firebase.auth.AuthResult) {
+        authBusy = false
+        firebaseUser = result.user
+        pendingParentEmail = ""
+        previewParentEmail = result.user?.phoneNumber.orEmpty()
+        if (result.additionalUserInfo?.isNewUser == true) {
+            parentPreviewMode = false; guestMode = false; stack.clear(); stack.add(Page.Welcome); stack.add(Page.ParentSetup)
+        } else {
+            finishEmailSignIn()
+        }
+    }
+    fun requestPhoneVerification(number: String, resendToken: PhoneAuthProvider.ForceResendingToken? = null) {
+        val auth = firebaseAuth
+        val hostActivity = activity
+        if (auth == null || hostActivity == null) {
+            showNotice("Firebase isn’t ready", "Configure Firebase for this build and try again.")
+            return
+        }
+        phoneRequestNumber = number
+        verificationId = null
+        authBusy = true
+        auth.useAppLanguage()
+        val callbacks = object : PhoneAuthProvider.OnVerificationStateChangedCallbacks() {
+            override fun onVerificationCompleted(credential: com.google.firebase.auth.PhoneAuthCredential) {
+                auth.signInWithCredential(credential).addOnCompleteListener { task ->
+                    if (task.isSuccessful) finishPhoneSignIn(task.result) else {
+                        authBusy = false
+                        if (!handleAccountCollision(task.exception, "phone sign-in")) showNotice("Phone sign-in failed", firebaseAuthError(task.exception))
+                    }
+                }
+            }
+            override fun onVerificationFailed(error: FirebaseException) {
+                authBusy = false
+                showNotice("Couldn’t send verification code", firebaseAuthError(error as? Exception))
+            }
+            override fun onCodeSent(id: String, token: PhoneAuthProvider.ForceResendingToken) {
+                authBusy = false
+                verificationId = id
+                phoneResendToken = token
+                if (stack.lastOrNull() != Page.PhoneCode) stack.add(Page.PhoneCode)
+            }
+            override fun onCodeAutoRetrievalTimeOut(id: String) {
+                verificationId = id
+                authBusy = false
+            }
+        }
+        runCatching {
+            val options = PhoneAuthOptions.newBuilder(auth)
+                .setPhoneNumber(number)
+                .setTimeout(60L, TimeUnit.SECONDS)
+                .setActivity(hostActivity)
+                .setCallbacks(callbacks)
+                .apply { if (resendToken != null) setForceResendingToken(resendToken) }
+                .build()
+            PhoneAuthProvider.verifyPhoneNumber(options)
+        }.onFailure {
+            authBusy = false
+            showNotice("Couldn’t send verification code", firebaseAuthError(it as? Exception))
+        }
+    }
+    fun launchGoogleSignIn() {
+        val auth = firebaseAuth
+        val webClientId = BuildConfig.FIREBASE_WEB_CLIENT_ID
+        if (auth == null || webClientId.isBlank()) {
+            showNotice("Google sign-in needs setup", "Enable Google in Firebase Authentication, add this app’s SHA-1 and SHA-256 fingerprints, then add the Firebase Web client ID to local.properties and refresh the Firebase Android config.")
+            return
+        }
+        authBusy = true
+        coroutineScope.launch {
+            try {
+                val googleOption = GetGoogleIdOption.Builder()
+                    .setServerClientId(webClientId)
+                    .setFilterByAuthorizedAccounts(false)
+                    .build()
+                val request = GetCredentialRequest.Builder().addCredentialOption(googleOption).build()
+                val result = CredentialManager.create(appContext).getCredential(appContext, request)
+                val credential = result.credential
+                if (credential !is CustomCredential || credential.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                    authBusy = false
+                    showNotice("Google sign-in failed", "Choose a Google account and try again.")
+                    return@launch
+                }
+                val token = GoogleIdTokenCredential.createFrom(credential.data).idToken
+                auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).addOnCompleteListener { task ->
+                    authBusy = false
+                    if (task.isSuccessful) {
+                        firebaseUser = task.result.user
+                        previewParentEmail = task.result.user?.email.orEmpty()
+                        parentPreviewMode = false; guestMode = false
+                        if (task.result.additionalUserInfo?.isNewUser == true) {
+                            pendingParentEmail = previewParentEmail
+                            stack.clear(); stack.add(Page.Welcome); stack.add(Page.ParentSetup)
+                        } else { stack.clear(); stack.add(Page.Home) }
+                    } else if (!handleAccountCollision(task.exception, "Google sign-in")) showNotice("Google sign-in failed", firebaseAuthError(task.exception))
+                }
+            } catch (error: GetCredentialException) {
+                authBusy = false
+                if (error.javaClass.simpleName.contains("Cancellation", ignoreCase = true)) return@launch
+                showNotice("Google sign-in was cancelled or unavailable", error.localizedMessage ?: "Try again or use email sign-in.")
+            } catch (error: Exception) {
+                authBusy = false
+                showNotice("Google sign-in failed", error.localizedMessage ?: "Try again or use email sign-in.")
+            }
+        }
+    }
+    LaunchedEffect(firebaseUser) {
+        val current = firebaseUser ?: return@LaunchedEffect
+        val isGoogleAccount = current.providerData.any { it.providerId == GoogleAuthProvider.PROVIDER_ID }
+        if (current.email != null && !current.isEmailVerified && !isGoogleAccount) {
+            pendingVerificationEmail = current.email.orEmpty()
+            if (stack.lastOrNull() != Page.EmailVerification) { stack.clear(); stack.add(Page.EmailVerification) }
+        } else if (stack.lastOrNull() == Page.Welcome) {
+            guestMode = false; parentPreviewMode = false; stack.clear(); stack.add(Page.Home)
+        }
+    }
     fun openPremiumFeature() { if (premium) go(Page.Listen) else premiumPrompt = true }
 
     BackHandler(enabled = stack.size > 1 || premiumPrompt) {
@@ -222,13 +461,64 @@ fun LittlePagesApp() {
           ) { target ->
             when (target) {
                 Page.Welcome -> WelcomeScreen(
-                    onGoogle = { unavailableNotice = "Google sign-in will be available after Firebase Authentication is configured." }, onEmail = { go(Page.EmailAuth) }, onPhone = { go(Page.PhoneAuth) }, onSignIn = { go(Page.EmailAuth) }, onGuest = { guestMode = true; parentPreviewMode = false; stack.clear(); stack.add(Page.Home) }, onParentPreview = { guestMode = false; parentPreviewMode = true; stack.clear(); stack.add(Page.Home) }
+                    onGoogle = ::launchGoogleSignIn, onEmail = { go(Page.EmailAuth) }, onPhone = { go(Page.PhoneAuth) }, onSignIn = { go(Page.EmailAuth) }, onGuest = { signOutFromAuth(); guestMode = true; parentPreviewMode = false; stack.clear(); stack.add(Page.Home) }, onParentPreview = { signOutFromAuth(); guestMode = false; parentPreviewMode = true; stack.clear(); stack.add(Page.Home) }
                 )
-                Page.EmailAuth -> EmailAuthScreen(onBack = ::back, onContinue = { creatingAccount, email -> if (creatingAccount) { pendingParentEmail = email; go(Page.ParentSetup) } else unavailableNotice = "Email authentication is not connected yet. No account was created or signed in." }, onGoogle = { unavailableNotice = "Google sign-in will be available after Firebase Authentication is configured." }, onPhone = { go(Page.PhoneAuth) }, onPasswordReset = { go(Page.PasswordReset) })
-                Page.PasswordReset -> PasswordResetScreen(onBack = ::back, onSubmit = { unavailableNotice = "Password reset is not connected. No reset email was sent." })
-                Page.PhoneAuth -> PhoneAuthScreen(onBack = ::back, onContinue = { phoneNumber = it; go(Page.PhoneCode) }, onEmail = { go(Page.EmailAuth) })
-                Page.PhoneCode -> PhoneVerificationScreen(phoneNumber = phoneNumber, onBack = ::back, onVerify = { unavailableNotice = "Phone verification is not connected yet. No code was sent or verified." })
-                Page.ParentSetup -> ParentOnboardingScreen(email = pendingParentEmail, onBack = ::back, onComplete = { name, email, child -> previewParentName = name; previewParentEmail = email; childProfiles.add(child); selectedChildId = child.id; parentPreviewMode = true; guestMode = false; stack.clear(); stack.add(Page.Home) })
+                Page.EmailAuth -> EmailAuthScreen(busy = authBusy, onBack = ::back, onContinue = { creatingAccount, email, password ->
+                    runAuth(
+                        operation = { auth -> if (creatingAccount) auth.createUserWithEmailAndPassword(email, password) else auth.signInWithEmailAndPassword(email, password) },
+                        onSuccess = {
+                            pendingParentEmail = email
+                            val user = firebaseAuth?.currentUser
+                            if (creatingAccount || user?.isEmailVerified == false) {
+                                newEmailAccountNeedsSetup = creatingAccount
+                                sendCurrentEmailVerification()
+                            } else { previewParentEmail = email; finishEmailSignIn() }
+                        }
+                    )
+                }, onGoogle = ::launchGoogleSignIn, onPhone = { go(Page.PhoneAuth) }, onPasswordReset = { go(Page.PasswordReset) })
+                Page.EmailVerification -> EmailVerificationScreen(
+                    email = pendingVerificationEmail,
+                    busy = authBusy,
+                    onCheck = {
+                        val user = firebaseAuth?.currentUser
+                        if (user == null) showNotice("Sign in again", "The account session expired. Sign in and request another verification email.")
+                        else {
+                            authBusy = true
+                            user.reload().addOnCompleteListener { task ->
+                                authBusy = false
+                                if (task.isSuccessful) {
+                                    firebaseUser = firebaseAuth.currentUser
+                                    if (firebaseAuth.currentUser?.isEmailVerified == true) {
+                                        previewParentEmail = pendingVerificationEmail
+                                        if (newEmailAccountNeedsSetup) { newEmailAccountNeedsSetup = false; pendingParentEmail = pendingVerificationEmail; stack.clear(); stack.add(Page.Welcome); stack.add(Page.ParentSetup) }
+                                        else finishEmailSignIn()
+                                    } else showNotice("Email not verified yet", "Open the verification link from your email, then try again.")
+                                } else showNotice("Couldn’t check verification", firebaseAuthError(task.exception))
+                            }
+                        }
+                    },
+                    onResend = ::sendCurrentEmailVerification,
+                    onSignOut = { signOutFromAuth(); newEmailAccountNeedsSetup = false; pendingVerificationEmail = ""; stack.clear(); stack.add(Page.Welcome) }
+                )
+                Page.PasswordReset -> PasswordResetScreen(busy = authBusy, onBack = ::back, onSubmit = { email ->
+                    runAuth(operation = { it.sendPasswordResetEmail(email) }, onSuccess = { showNotice("Check your email", "If an account exists for this address, Firebase has sent password reset instructions.") })
+                })
+                Page.PhoneAuth -> PhoneAuthScreen(busy = authBusy, onBack = ::back, onContinue = ::requestPhoneVerification, onEmail = { go(Page.EmailAuth) })
+                Page.PhoneCode -> PhoneVerificationScreen(phoneNumber = phoneRequestNumber, busy = authBusy, onBack = ::back, onVerify = { code ->
+                    val auth = firebaseAuth
+                    val id = verificationId
+                    if (auth == null || id == null) showNotice("Verification expired", "Request a new SMS code and try again.")
+                    else {
+                        authBusy = true
+                        runCatching { auth.signInWithCredential(PhoneAuthProvider.getCredential(id, code)).addOnCompleteListener { task ->
+                            if (task.isSuccessful) finishPhoneSignIn(task.result) else {
+                                authBusy = false
+                                if (!handleAccountCollision(task.exception, "phone sign-in")) showNotice("Phone verification failed", firebaseAuthError(task.exception))
+                            }
+                        } }.onFailure { authBusy = false; showNotice("Phone verification failed", firebaseAuthError(it as? Exception)) }
+                    }
+                }, onResend = { requestPhoneVerification(phoneRequestNumber, phoneResendToken) })
+                Page.ParentSetup -> ParentOnboardingScreen(email = pendingParentEmail.ifBlank { previewParentEmail }, onBack = ::back, onComplete = { name, email, child -> previewParentName = name; previewParentEmail = email; childProfiles.add(child); selectedChildId = child.id; parentPreviewMode = false; guestMode = false; stack.clear(); stack.add(Page.Home) })
                 Page.Home -> HomeScreen(continuePage = progressStore.page(activeChildId, books[0].title).coerceIn(1, 24), onBook = { selectedBook = it; go(Page.BookDetails) }, onContinue = { selectedBook = books[0]; go(Page.Reader) }, onLibrary = { stack.clear(); stack.add(Page.Library) }, onSearch = { go(Page.Search) }, onOffline = { go(Page.Offline) }, onPremium = { go(Page.Subscription) })
                 Page.Library -> LibraryScreen(categories = managedConfiguration.bookCategories, onBook = { selectedBook = it; go(Page.BookDetails) }, onSearch = { go(Page.Search) }, onOffline = { go(Page.Offline) })
                 Page.Search -> SearchScreen(query = query, categories = managedConfiguration.bookCategories, onQuery = { query = it }, onBook = { selectedBook = it; go(Page.BookDetails) }, onBack = ::back)
@@ -241,7 +531,7 @@ fun LittlePagesApp() {
                 Page.CreatePost -> CreatePostScreen(categories = managedConfiguration.communityCategories, maximumImageBytes = managedConfiguration.maximumCommunityImageBytes, allowedImageMimeTypes = managedConfiguration.allowedCommunityImageMimeTypes, onBack = ::back, onPost = { post -> if (stack.getOrNull(stack.lastIndex - 1) == Page.Group) groupPosts.add(0, post) else communityPosts.add(0, post); back() })
                 Page.Reviews -> ReviewsScreen(book = selectedBook, onBack = ::back)
                 Page.Offline -> OfflineScreen(books = books.filter { it.title in offlineBookTitles }, onBack = ::back, onBrowse = { stack.clear(); stack.add(Page.Library) }, onRemove = { offlineBookTitles.remove(it.title) }, onRetrySync = { recoveryType = "offline"; go(Page.Recovery) })
-                Page.Parent -> ParentScreen(guest = guestMode, previewAccount = parentPreviewMode, parentName = previewParentName, parentEmail = previewParentEmail, language = selectedLanguage, child = childProfiles.firstOrNull { it.id == activeChildId }, onLanguage = { tag -> selectedLanguage = tag; activity?.let { AppLanguage.set(it, tag) } }, onProfiles = { if (guestMode) unavailableNotice = "Create a parent account to add child profiles." else go(Page.Profiles) }, onSubscription = { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else go(Page.Subscription) }, onOrders = { if (guestMode) unavailableNotice = "Sign in to view orders." else go(Page.Orders) }, onSupport = { go(Page.Support) }, onOffline = { if (guestMode) unavailableNotice = "Sign in to manage offline books." else go(Page.Offline) }, onPrivacy = { go(Page.Privacy) }, onUnavailable = { message -> if (guestMode || parentPreviewMode) { guestMode = false; parentPreviewMode = false; stack.clear(); stack.add(Page.Welcome) } else unavailableNotice = message }, onCreateAccount = { guestMode = false; parentPreviewMode = false; stack.clear(); stack.add(Page.Welcome) })
+                Page.Parent -> ParentScreen(guest = guestMode, previewAccount = parentPreviewMode, authenticated = isAuthenticatedUser, parentName = previewParentName, parentEmail = authenticatedEmail ?: previewParentEmail, language = selectedLanguage, child = childProfiles.firstOrNull { it.id == activeChildId }, onLanguage = { tag -> selectedLanguage = tag; activity?.let { AppLanguage.set(it, tag) } }, onProfiles = { if (guestMode) unavailableNotice = "Create a parent account to add child profiles." else go(Page.Profiles) }, onSubscription = { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else go(Page.Subscription) }, onOrders = { if (guestMode) unavailableNotice = "Sign in to view orders." else go(Page.Orders) }, onSupport = { go(Page.Support) }, onOffline = { if (guestMode) unavailableNotice = "Sign in to manage offline books." else go(Page.Offline) }, onPrivacy = { go(Page.Privacy) }, onUnavailable = { message -> if (guestMode || parentPreviewMode || isAuthenticatedUser) returnToWelcome(signOut = isAuthenticatedUser) else unavailableNotice = message }, onCreateAccount = { returnToWelcome(signOut = isAuthenticatedUser) })
                 Page.Profiles -> ProfilesScreen(children = childProfiles, selectedChildId = activeChildId, progressStore = progressStore, onSelectChild = { selectedChildId = it }, onBack = ::back, onSaveChild = { old, updated -> if (old == null) childProfiles.add(updated) else { val index = childProfiles.indexOf(old); if (index >= 0) childProfiles[index] = updated } })
                 Page.Privacy -> PrivacyScreen(onBack = ::back)
                 Page.Subscription -> SubscriptionScreen(premium = premium, onBack = ::back, onSubscribe = { unavailableNotice = "Subscription checkout is not connected yet. Premium access will only activate after a verified payment." }, onPreview = { go(Page.ListenPreview) }, onPaymentRecovery = { recoveryType = "payment"; go(Page.Recovery) })
@@ -259,7 +549,7 @@ fun LittlePagesApp() {
             PremiumDialog(onDismiss = { premiumPrompt = false }, onSubscribe = { premiumPrompt = false; go(Page.Subscription) })
         }
         unavailableNotice?.let { message ->
-            AlertDialog(onDismissRequest = { unavailableNotice = null }, title = { AppText("Not available yet") }, text = { AppText(message) }, confirmButton = { TextButton(onClick = { unavailableNotice = null }) { AppText("OK") } })
+            AlertDialog(onDismissRequest = { unavailableNotice = null }, title = { AppText(noticeTitle) }, text = { AppText(message) }, confirmButton = { TextButton(onClick = { unavailableNotice = null }) { AppText("OK") } })
         }
     }
 }
@@ -310,7 +600,7 @@ private fun WelcomeScreen(onGoogle: () -> Unit, onEmail: () -> Unit, onPhone: ()
 }
 
 @Composable
-private fun EmailAuthScreen(onBack: () -> Unit, onContinue: (creatingAccount: Boolean, email: String) -> Unit, onGoogle: () -> Unit, onPhone: () -> Unit, onPasswordReset: () -> Unit) {
+private fun EmailAuthScreen(busy: Boolean, onBack: () -> Unit, onContinue: (creatingAccount: Boolean, email: String, password: String) -> Unit, onGoogle: () -> Unit, onPhone: () -> Unit, onPasswordReset: () -> Unit) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
@@ -331,7 +621,7 @@ private fun EmailAuthScreen(onBack: () -> Unit, onContinue: (creatingAccount: Bo
             TextButton(onClick = onPasswordReset, modifier = Modifier.align(Alignment.End), contentPadding = PaddingValues(horizontal = PagesSpacing.Small)) { AppText("Forgot password?", color = PagesColors.Forest) }
         }
         Spacer(Modifier.height(PagesSpacing.Relaxed))
-        PrimaryButton(if (creatingAccount) "Create account" else "Sign in", null) { submitted = true; if (validEmail && validPassword && (!creatingAccount || passwordsMatch)) onContinue(creatingAccount, email.trim()) }
+        PrimaryButton(if (busy) "Please wait…" else if (creatingAccount) "Create account" else "Sign in", null, enabled = !busy) { submitted = true; if (validEmail && validPassword && (!creatingAccount || passwordsMatch)) onContinue(creatingAccount, email.trim(), password) }
         TextButton(onClick = { creatingAccount = !creatingAccount; submitted = false; confirmPassword = "" }, modifier = Modifier.align(Alignment.CenterHorizontally)) { AppText(if (creatingAccount) "Already have an account? Sign in" else "New to LittlePages? Create an account", color = PagesColors.Forest) }
         OrDivider()
         OutlineButton("Continue with Google", Icons.Filled.AccountCircle, onGoogle)
@@ -341,42 +631,56 @@ private fun EmailAuthScreen(onBack: () -> Unit, onContinue: (creatingAccount: Bo
 }
 
 @Composable
-private fun PasswordResetScreen(onBack: () -> Unit, onSubmit: () -> Unit) {
-    var email by remember { mutableStateOf("") }
-    var submitted by remember { mutableStateOf(false) }
-    val validEmail = android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
-    FormPage(title = "Reset your password", subtitle = "Enter the parent email for your account. The reset service is not connected in this preview.", onBack = onBack) {
-        OutlinedTextField(email, { email = it }, label = { AppText("Email address") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && !validEmail, supportingText = { if (submitted && !validEmail) AppText("Enter a valid email address.") })
-        PrimaryButton("Send reset link", Icons.AutoMirrored.Filled.Send) { submitted = true; if (validEmail) onSubmit() }
+private fun EmailVerificationScreen(email: String, busy: Boolean, onCheck: () -> Unit, onResend: () -> Unit, onSignOut: () -> Unit) {
+    FormPage(title = "Verify your email", subtitle = "We sent a verification link to $email. Verify this address before continuing.", onBack = onSignOut) {
+        AppText("After opening the link, return to LittlePages and check your verification status. You can request another email if needed.", color = PagesColors.Muted)
+        PrimaryButton(if (busy) "Checking…" else "I’ve verified", Icons.Filled.VerifiedUser, enabled = !busy, onClick = onCheck)
+        OutlineButton(if (busy) "Please wait…" else "Resend verification email", Icons.AutoMirrored.Filled.Send) { if (!busy) onResend() }
+        TextButton(onClick = onSignOut, modifier = Modifier.align(Alignment.CenterHorizontally)) { AppText("Sign out", color = PagesColors.Forest) }
     }
 }
 
 @Composable
-private fun PhoneAuthScreen(onBack: () -> Unit, onContinue: (String) -> Unit, onEmail: () -> Unit) {
+private fun PasswordResetScreen(busy: Boolean, onBack: () -> Unit, onSubmit: (String) -> Unit) {
+    var email by remember { mutableStateOf("") }
+    var submitted by remember { mutableStateOf(false) }
+    val validEmail = android.util.Patterns.EMAIL_ADDRESS.matcher(email.trim()).matches()
+    FormPage(title = "Reset your password", subtitle = "Enter the parent email address associated with your account.", onBack = onBack) {
+        OutlinedTextField(email, { email = it }, label = { AppText("Email address") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && !validEmail, supportingText = { if (submitted && !validEmail) AppText("Enter a valid email address.") })
+        PrimaryButton(if (busy) "Sending…" else "Send reset link", Icons.AutoMirrored.Filled.Send, enabled = !busy) { submitted = true; if (validEmail) onSubmit(email.trim()) }
+    }
+}
+
+@Composable
+private fun PhoneAuthScreen(busy: Boolean, onBack: () -> Unit, onContinue: (String) -> Unit, onEmail: () -> Unit) {
     var phone by remember { mutableStateOf("") }
     var submitted by remember { mutableStateOf(false) }
-    FormPage(title = "Continue with phone", subtitle = "Enter a number to preview the verification flow. SMS delivery is disabled here.", onBack = onBack) {
+    val phoneDigits = phone.filter(Char::isDigit)
+    val localNumber = phoneDigits.removePrefix("0")
+    val validPhone = localNumber.length == 10 && localNumber.startsWith("1")
+    FormPage(title = "Continue with phone", subtitle = "Enter your Bangladesh mobile number. We’ll text you a one-time code; standard SMS rates may apply.", onBack = onBack) {
         Row(horizontalArrangement = Arrangement.spacedBy(PagesSpacing.Small), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(value = "+880", onValueChange = {}, readOnly = true, label = { AppText("Code") }, modifier = Modifier.width(PagesSizes.PhoneCountryCodeWidth), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true)
-            OutlinedTextField(value = phone, onValueChange = { phone = it.filter(Char::isDigit).take(15) }, label = { AppText("Phone number") }, leadingIcon = { Icon(Icons.Filled.Phone, null) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && phone.length < 8, supportingText = { if (submitted && phone.length < 8) AppText("Enter a valid phone number.") })
+            OutlinedTextField(value = phone, onValueChange = { phone = it.filter(Char::isDigit).take(11) }, label = { AppText("Phone number") }, leadingIcon = { Icon(Icons.Filled.Phone, null) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && !validPhone, supportingText = { if (submitted && !validPhone) AppText("Enter a valid Bangladesh mobile number.") })
         }
         Spacer(Modifier.height(PagesSpacing.SectionGap))
-        PrimaryButton("Continue to code entry", Icons.Filled.Sms) { submitted = true; if (phone.length >= 8) onContinue("+880$phone") }
-        AppText("We use your number only to secure your account.", color = PagesColors.Muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(PagesSpacing.CardContent))
+        PrimaryButton(if (busy) "Sending code…" else "Text me a code", Icons.Filled.Sms, enabled = !busy) { submitted = true; if (validPhone) onContinue("+880$localNumber") }
+        AppText("Firebase uses your phone number to send the sign-in code and for abuse prevention.", color = PagesColors.Muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(PagesSpacing.CardContent))
         OrDivider()
         OutlineButton("Continue with email", Icons.Filled.Email, onEmail)
     }
 }
 
 @Composable
-private fun PhoneVerificationScreen(phoneNumber: String, onBack: () -> Unit, onVerify: () -> Unit) {
+private fun PhoneVerificationScreen(phoneNumber: String, busy: Boolean, onBack: () -> Unit, onVerify: (String) -> Unit, onResend: () -> Unit) {
     var code by remember { mutableStateOf("") }
     var submitted by remember { mutableStateOf(false) }
-    FormPage(title = "Verify your number", subtitle = "A code would be sent to $phoneNumber. Enter it here to preview verification. SMS delivery is disabled.", onBack = onBack) {
+    FormPage(title = "Verify your number", subtitle = "Enter the one-time code sent to $phoneNumber.", onBack = onBack) {
         OutlinedTextField(value = code, onValueChange = { code = it.filter(Char::isDigit).take(6) }, label = { AppText("Verification code") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && code.length != 6, supportingText = { if (submitted && code.length != 6) AppText("Enter all 6 digits.") })
-        PrimaryButton("Preview verification", Icons.Filled.VerifiedUser) { submitted = true; if (code.length == 6) onVerify() }
+        PrimaryButton(if (busy) "Verifying…" else "Verify and continue", Icons.Filled.VerifiedUser, enabled = !busy) { submitted = true; if (code.length == 6) onVerify(code) }
+        TextButton(onClick = onResend, enabled = !busy, modifier = Modifier.align(Alignment.CenterHorizontally)) { AppText("Resend code", color = PagesColors.Forest) }
         TextButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterHorizontally)) { AppText("Change phone number", color = PagesColors.Forest) }
-        AppText("No SMS was sent. Verification will be available after Firebase Authentication is configured.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+        AppText("Firebase may verify this device automatically. Otherwise, enter the code from your SMS.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
     }
 }
 
@@ -389,12 +693,12 @@ private fun ParentOnboardingScreen(email: String, onBack: () -> Unit, onComplete
     PageScaffold(onBack, "Set up your family") {
         AppText("Create a parent profile and add a child reader.", color = PagesColors.Muted)
         OutlinedTextField(value = parentName, onValueChange = { parentName = it.take(50) }, label = { AppText("Parent name") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && parentName.isBlank())
-        OutlinedTextField(value = email, onValueChange = {}, readOnly = true, label = { AppText("Parent email") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true)
+        OutlinedTextField(value = email, onValueChange = {}, readOnly = true, label = { AppText("Parent email or phone") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true)
         SectionTitle("First child profile")
         OutlinedTextField(value = childName, onValueChange = { childName = it.take(30) }, label = { AppText("Child nickname") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && childName.isBlank())
         AppText("Age range", color = PagesColors.Muted, modifier = Modifier.padding(top = PagesSpacing.Compact, bottom = PagesSpacing.Small))
         Row(horizontalArrangement = Arrangement.spacedBy(PagesSpacing.Small)) { listOf("3 years old", "5 years old", "7 years old").forEach { option -> FilterChip(selected = ageBand == option, onClick = { ageBand = option }, label = { AppText(option.substringBefore(' ')) }) } }
-        AppText("This preview does not create an account or send your information. Connect authentication and parent consent before collecting real family details.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
+        AppText("Your parent email account is active. The parent name and child nickname stay in this device preview and are not synced to the database.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
         PrimaryButton("Continue to family preview", Icons.Filled.FamilyRestroom) { submitted = true; if (parentName.isNotBlank() && childName.isNotBlank()) onComplete(parentName.trim(), email, ChildProfile(childName.trim(), ageBand, "child-${System.currentTimeMillis()}")) }
     }
 }
@@ -933,9 +1237,9 @@ private fun OfflineScreen(books: List<Book>, onBack: () -> Unit, onBrowse: () ->
 }
 
 @Composable
-private fun ParentScreen(guest: Boolean, previewAccount: Boolean, parentName: String, parentEmail: String, language: String, child: ChildProfile?, onLanguage: (String) -> Unit, onProfiles: () -> Unit, onSubscription: () -> Unit, onOrders: () -> Unit, onSupport: () -> Unit, onOffline: () -> Unit, onPrivacy: () -> Unit, onUnavailable: (String) -> Unit, onCreateAccount: () -> Unit) {
+private fun ParentScreen(guest: Boolean, previewAccount: Boolean, authenticated: Boolean, parentName: String, parentEmail: String, language: String, child: ChildProfile?, onLanguage: (String) -> Unit, onProfiles: () -> Unit, onSubscription: () -> Unit, onOrders: () -> Unit, onSupport: () -> Unit, onOffline: () -> Unit, onPrivacy: () -> Unit, onUnavailable: (String) -> Unit, onCreateAccount: () -> Unit) {
     MainPage(title = stringResource(R.string.parent_account), subtitle = "Manage your family’s LittlePages.") {
-        CardSurface(Modifier.fillMaxWidth(), color = PagesColors.Sage) { Row(verticalAlignment = Alignment.CenterVertically) { Avatar(if (guest) "G" else (parentName.firstOrNull()?.uppercase() ?: "P")); Column(Modifier.padding(start = PagesSpacing.Compact)) { AppText(if (guest) "Guest access" else if (previewAccount) parentName.ifBlank { "Parent preview" } else "Parent account", fontWeight = FontWeight.Bold); AppText(if (guest) "Browsing without an account" else if (previewAccount) "${parentEmail.ifBlank { "Sample profile" }} · preview only" else "Account session unavailable in preview", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) } } }
+        CardSurface(Modifier.fillMaxWidth(), color = PagesColors.Sage) { Row(verticalAlignment = Alignment.CenterVertically) { Avatar(if (guest) "G" else (parentName.firstOrNull()?.uppercase() ?: "P")); Column(Modifier.padding(start = PagesSpacing.Compact)) { AppText(if (guest) "Guest access" else if (previewAccount) parentName.ifBlank { "Parent preview" } else "Parent account", fontWeight = FontWeight.Bold); AppText(if (guest) "Browsing without an account" else if (previewAccount) "${parentEmail.ifBlank { "Sample profile" }} · preview only" else if (authenticated) "${parentEmail.ifBlank { "Signed in" }} · family data stays in this preview" else "Account session unavailable in preview", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) } } }
         if (guest) {
             AppText("Create an account to save your reading progress across devices, order books, and join the parent community.", color = PagesColors.Muted)
             PrimaryButton("Create a parent account", Icons.Filled.AccountCircle, onCreateAccount)

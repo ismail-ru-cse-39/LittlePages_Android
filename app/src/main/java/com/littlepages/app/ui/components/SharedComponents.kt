@@ -90,8 +90,8 @@ internal fun BrandMark() {
 }
 
 @Composable
-internal fun PrimaryButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector?, onClick: () -> Unit) {
-    Button(onClick = onClick, modifier = Modifier.fillMaxWidth().heightIn(min = PagesSizes.StandardControlHeight), shape = RoundedCornerShape(PagesShapes.Control), colors = ButtonDefaults.buttonColors(containerColor = PagesColors.Forest), contentPadding = PaddingValues(horizontal = PagesSpacing.Medium, vertical = PagesSpacing.ButtonVerticalPadding)) {
+internal fun PrimaryButton(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector?, enabled: Boolean = true, onClick: () -> Unit) {
+    Button(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = PagesSizes.StandardControlHeight), shape = RoundedCornerShape(PagesShapes.Control), colors = ButtonDefaults.buttonColors(containerColor = PagesColors.Forest), contentPadding = PaddingValues(horizontal = PagesSpacing.Medium, vertical = PagesSpacing.ButtonVerticalPadding)) {
         if (icon != null) { Icon(icon, null, modifier = Modifier.size(PagesSizes.ButtonIcon)); Spacer(Modifier.width(PagesSpacing.ButtonIconGap)) }
         AppText(text, fontWeight = FontWeight.SemiBold)
     }
