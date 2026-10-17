@@ -1,6 +1,7 @@
 package com.littlepages.app.ui
 
 import android.app.Activity
+import android.app.Application
 import android.animation.ValueAnimator
 import android.content.Context
 import android.content.ContextWrapper
@@ -218,8 +219,25 @@ fun LittlePagesApp() {
                     }
                 }
             }
+        var hasResumedOnce = false
+        val application = appContext.applicationContext as? Application
+        val activityCallbacks = object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(resumedActivity: Activity) {
+                if (resumedActivity !== activity) return
+                if (hasResumedOnce) coroutineScope.launch { repository.refresh() }
+                else hasResumedOnce = true
+            }
+            override fun onActivityCreated(activity: Activity, state: android.os.Bundle?) = Unit
+            override fun onActivityStarted(activity: Activity) = Unit
+            override fun onActivityPaused(activity: Activity) = Unit
+            override fun onActivityStopped(activity: Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: Activity, state: android.os.Bundle) = Unit
+            override fun onActivityDestroyed(activity: Activity) = Unit
+        }
+        application?.registerActivityLifecycleCallbacks(activityCallbacks)
         onDispose {
             manifestListener.remove()
+            application?.unregisterActivityLifecycleCallbacks(activityCallbacks)
         }
     }
     val managedConfiguration by configurationSource.configuration.collectAsState()
