@@ -20,9 +20,7 @@
     ],
     "productTypes": [
       { "id": "book", "label": { "en": "Books", "bn": "বই" }, "schemaVersion": 1, "renderer": "book_v1", "attributes": [
-        { "id": "author", "label": { "en": "Author", "bn": "লেখক" }, "valueType": "text", "required": true },
-        { "id": "age_band", "label": { "en": "Recommended age", "bn": "প্রস্তাবিত বয়স" }, "valueType": "text", "required": true },
-        { "id": "page_count", "label": { "en": "Page count", "bn": "পৃষ্ঠা সংখ্যা" }, "valueType": "number", "required": false }
+        { "id": "author", "label": { "en": "Author", "bn": "লেখক" }, "valueType": "text", "required": true }
       ], "enabled": true },
       { "id": "toy", "label": { "en": "Toys", "bn": "খেলনা" }, "schemaVersion": 1, "renderer": "physical_good_v1", "attributes": [
         { "id": "age_band", "label": { "en": "Recommended age", "bn": "প্রস্তাবিত বয়স" }, "valueType": "text", "required": true },

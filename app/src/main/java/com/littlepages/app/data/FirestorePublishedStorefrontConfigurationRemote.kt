@@ -29,7 +29,15 @@ class FirestorePublishedStorefrontConfigurationRemote(
             if ("id" in data) data else data + ("id" to document.id)
         }
 
-        return decoder.decodeFirestoreSnapshot(manifest, configuration, products)
+        val promotionDocuments = firestore.collection("catalogRevisions")
+            .document(catalogRevision.toString()).collection("promotions")
+            .get().awaitResult().documents
+        val promotions = promotionDocuments.map { document ->
+            val data = document.data ?: error("Promotion ${document.id} has no data")
+            if ("id" in data) data else data + ("id" to document.id)
+        }
+
+        return decoder.decodeFirestoreSnapshot(manifest, configuration, products, promotions)
     }
 
     private fun Map<String, Any?>.requiredLong(name: String): Long = when (val value = this[name]) {

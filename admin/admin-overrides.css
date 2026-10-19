@@ -18,6 +18,11 @@
 .method-options { display: flex; gap: 9px; }
 .method-option { display: flex; align-items: center; gap: 5px; padding: 7px 9px; border-radius: 8px; background: #f4f6f2; }
 .policy-lock-note { color: #78867d; font-size: 10px; line-height: 1.5; margin: 13px 0 0; }
+.policy-workflow { display: grid; gap: 9px; margin-top: 16px; }
+.policy-workflow h3 { margin: 8px 0 0; color: var(--ink); font-size: 12px; }
+.policy-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.policy-audit-list { display: grid; gap: 6px; }
+.policy-audit-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; color: #68776e; font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
 .role-warning { display: grid; gap: 4px; border: 1px solid #efd6b0; border-radius: 10px; background: #fff8ec; padding: 12px 14px; color: #786240; font-size: 10px; line-height: 1.5; }
 .role-warning strong { color: #72542a; font-size: 11px; }
 .staff-role-form { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(150px, .7fr) auto; gap: 10px; align-items: end; margin: 14px 0; }
@@ -59,6 +64,20 @@
 .product-form input, .product-form select, .product-form textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: #fff; color: var(--ink); font: inherit; }
 .product-form textarea { min-height: 65px; resize: vertical; }
 .product-form .description-field { grid-column: span 3; }
+.book-details-fields { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; min-width: 0; margin: 0; border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.book-details-fields legend { padding: 0 5px; color: var(--forest); font-size: 10px; font-weight: 750; }
+.book-details-fields label { display: grid; gap: 6px; min-width: 0; color: #68776e; font-size: 10px; font-weight: 700; }
+.book-details-fields input, .book-details-fields select { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: #fff; color: var(--ink); font: inherit; }
+.book-details-fields .boolean-field { display: flex; align-items: center; gap: 7px; }
+.book-details-fields input[type="checkbox"] { width: 18px; accent-color: var(--forest); }
+.variant-editor { grid-column: 1 / -1; display: grid; gap: 10px; min-width: 0; margin: 0; border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.variant-editor legend { padding: 0 5px; color: var(--forest); font-size: 10px; font-weight: 750; }
+.variant-editor > button { justify-self: end; }
+.variant-card { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 8px; min-width: 0; border: 1px solid var(--line); border-radius: 9px; padding: 10px; }
+.variant-card legend { color: var(--muted); font-weight: 700; }
+.variant-card label { display: grid; gap: 5px; min-width: 0; color: #68776e; font-size: 9px; font-weight: 700; }
+.variant-card input, .variant-card select { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 7px; padding: 8px; background: #fff; color: var(--ink); font: inherit; }
+.variant-card > button { align-self: end; }
 .attribute-fields { display: contents; }
 .attribute-fields label { display: grid; gap: 6px; color: #68776e; font-size: 10px; font-weight: 700; }
 .attribute-fields input, .attribute-fields select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: #fff; color: var(--ink); font: inherit; }
@@ -81,6 +100,30 @@
 .type-card.archived { opacity: .62; }
 .type-card .store-name { flex: 1; min-width: 0; }
 .type-card .entity-actions { flex-wrap: wrap; justify-content: flex-end; }
+.promotion-preview-warning { display: grid; gap: 4px; margin: 12px 0; border: 1px solid #efd6b0; border-radius: 10px; background: #fff8ec; padding: 12px 14px; color: #786240; font-size: 10px; line-height: 1.5; }
+.promotion-preview-warning strong { color: #72542a; font-size: 11px; }
+.promotion-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 14px 0 20px; }
+.promotion-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-content: start; border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: #f7f8f4; }
+.promotion-form h3 { grid-column: 1 / -1; margin: 0; color: var(--ink); font-size: 13px; }
+.promotion-form > label { display: grid; gap: 6px; min-width: 0; color: #68776e; font-size: 10px; font-weight: 700; }
+.promotion-form input, .promotion-form select { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: #fff; color: var(--ink); font: inherit; }
+.promotion-form select[multiple] { min-height: 92px; }
+.promotion-form > button { grid-column: 1 / -1; justify-self: end; }
+.promotion-list { display: grid; gap: 8px; margin: 9px 0 18px; }
+.promotion-row { display: grid; grid-template-columns: minmax(140px, .8fr) minmax(200px, 1.5fr) auto auto; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 11px; padding: 10px; color: var(--ink); font-size: 10px; }
+.promotion-meta { color: var(--muted); line-height: 1.45; }
+.one-time-code-export { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; border: 1px solid #d9e5d8; border-radius: 10px; padding: 12px; color: var(--forest); font-size: 10px; }
+.asset-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: end; margin: 14px 0; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: #f7f8f4; }
+.asset-form label { display: grid; gap: 6px; min-width: 0; color: #68776e; font-size: 10px; font-weight: 700; }
+.asset-form input, .asset-form select { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: #fff; color: var(--ink); font: inherit; }
+.asset-form button { grid-column: 1 / -1; justify-self: end; }
+.publication-revision-field { display: grid; gap: 7px; margin: 12px 0 18px; color: var(--ink); font-weight: 700; }
+.publication-revision-field input { width: min(100%, 240px); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: #fff; color: var(--ink); font: inherit; }
+.publication-revision-field small { max-width: 620px; color: var(--muted); font-weight: 400; line-height: 1.5; }
+.publication-revision-field code { font-size: .9em; }
+dialog#publishDialog { width: min(620px, calc(100% - 32px)); }
+dialog#publishDialog .dialog-actions { flex-wrap: wrap; }
+@media (max-width: 900px) { .promotion-columns { grid-template-columns: 1fr; } .promotion-row { grid-template-columns: 1fr auto; } .promotion-row .promotion-meta { grid-column: 1 / -1; grid-row: 2; } .promotion-row .entity-actions { grid-column: 1 / -1; flex-wrap: wrap; } }
 @media (max-width: 720px) {
   .policy-grid { grid-template-columns: 1fr; }
   .staff-role-form { grid-template-columns: 1fr 1fr; }
@@ -91,6 +134,9 @@
   .draft-history-counts { grid-column: 1 / -1; grid-row: 2; }
   .product-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .product-form .description-field, .product-form .form-actions { grid-column: span 2; }
+  .book-details-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .variant-card { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .variant-card > button { grid-column: 1 / -1; justify-self: end; }
   .product-admin-row { grid-template-columns: 34px minmax(0, 1fr) auto; }
   .product-admin-row .product-row-actions { grid-column: 2 / -1; }
   .store-row { grid-template-columns: 34px minmax(80px, 1fr) 88px auto auto; }
@@ -100,4 +146,8 @@
   .block-editor-list { grid-template-columns: 1fr; }
   .product-type-form { grid-template-columns: 1fr 1fr; }
   .product-type-form .form-actions { grid-column: 1 / -1; }
+  .promotion-form { grid-template-columns: 1fr; }
+  .promotion-form h3, .promotion-form > button { grid-column: 1; }
+  .one-time-code-export { align-items: flex-start; flex-direction: column; }
+  .asset-form { grid-template-columns: 1fr 1fr; }
 }

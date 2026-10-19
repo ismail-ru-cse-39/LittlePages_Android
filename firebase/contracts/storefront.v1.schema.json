@@ -105,13 +105,36 @@
       },
       "additionalProperties": false
     },
+    "BookDetails": {
+      "type": "object",
+      "required": ["ageBand", "readingLevel", "pageCount", "locales", "contentVersion", "access", "pdfInAppEnabled"],
+      "properties": {
+        "ageBand": { "enum": ["0-2", "3-5", "6-8", "9-12"] },
+        "readingLevel": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "seriesId": { "type": ["string", "null"], "maxLength": 80 },
+        "seriesOrder": { "type": ["integer", "null"], "minimum": 1 },
+        "pageCount": { "type": "integer", "minimum": 1 },
+        "locales": { "type": "array", "items": { "enum": ["en", "bn"] }, "minItems": 1, "uniqueItems": true },
+        "contentVersion": { "type": "integer", "minimum": 1 },
+        "access": { "enum": ["free", "premium", "paid"] },
+        "pdfInAppEnabled": { "const": true },
+        "physicalEdition": {
+          "type": "object", "required": ["available"],
+          "properties": { "available": { "type": "boolean" }, "variantId": { "type": ["string", "null"] } },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "Product": {
       "type": "object",
+      "description": "When the referenced product type renderer is book_v1, include bookDetails; the trusted validator checks it against the versioned product-type registry.",
       "required": ["id", "typeId", "status", "title", "categoryIds", "variants", "attributes"],
       "properties": {
         "id": { "type": "string" }, "typeId": { "type": "string" }, "status": { "enum": ["draft", "published", "archived"] },
         "title": { "$ref": "#/$defs/LocalizedLabel" }, "description": { "$ref": "#/$defs/LocalizedText" },
         "categoryIds": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "bookDetails": { "$ref": "#/$defs/BookDetails" },
         "imageAssetIds": { "type": "array", "items": { "type": "string" }, "maxItems": 20 },
         "variants": { "type": "array", "items": { "$ref": "#/$defs/ProductVariant" }, "minItems": 1, "maxItems": 100 },
         "attributes": { "type": "object", "additionalProperties": { "type": ["string", "number", "boolean", "array"] } },

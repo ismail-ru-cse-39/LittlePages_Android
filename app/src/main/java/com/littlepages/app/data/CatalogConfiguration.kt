@@ -125,6 +125,20 @@ data class ManagedProductVariant(
     val stockQuantity: Int? = null
 )
 
+data class ManagedBookDetails(
+    val ageBand: String,
+    val readingLevel: String,
+    val seriesId: String? = null,
+    val seriesOrder: Int? = null,
+    val pageCount: Int,
+    val locales: List<String>,
+    val contentVersion: Int,
+    val access: String,
+    val pdfInAppEnabled: Boolean,
+    val physicalEditionAvailable: Boolean,
+    val physicalEditionVariantId: String? = null
+)
+
 /** Shared sellable item data. Reader assets and entitlements stay in the book-specific model. */
 data class ManagedProduct(
     val id: String,
@@ -135,7 +149,29 @@ data class ManagedProduct(
     val imageAssetIds: List<String>,
     val variants: List<ManagedProductVariant>,
     val attributes: Map<String, ProductAttributeValue> = emptyMap(),
-    val published: Boolean = true
+    val published: Boolean = true,
+    val bookDetails: ManagedBookDetails? = null
+)
+
+/** Public, immutable automatic promotion metadata. Discount codes are never part of this model. */
+data class ManagedPromotion(
+    val id: String,
+    val status: String,
+    val name: LocalizedCopy,
+    val targetKind: String,
+    val targetProductId: String? = null,
+    val targetCategoryIds: List<String> = emptyList(),
+    val discountType: String,
+    val discountValue: Long,
+    val currency: String? = null,
+    val startsAt: String,
+    val endsAt: String,
+    val bannerText: LocalizedCopy,
+    val bannerImageAssetId: String? = null,
+    val destinationKind: String,
+    val destinationId: String,
+    val stackingPolicy: String = "best_single_discount",
+    val priceFloorMinor: Long = 1
 )
 
 /** Shared storefront view of configuration, retained as a type alias for existing catalogue UI. */

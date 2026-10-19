@@ -2,11 +2,11 @@
 
 ## Current state
 
-`firestore.rules` now permits unauthenticated reads only for `publicConfiguration/current`, numeric immutable `configurationRevisions`, and product documents beneath numeric `catalogRevisions`. Client writes and all other reads remain denied. This narrow public read surface supports guest storefront browsing; it is safe only if the trusted publisher places public data in these immutable revision paths and never puts drafts or private assets there. `storage.rules` still deny all client access. These rules have not been emulator-tested or deployed, and Firestore reads will continue to fail under the currently deployed deny-all rules until you deploy the reviewed file.
+`firestore.rules` now permits unauthenticated reads only for `publicConfiguration/current`, numeric immutable `configurationRevisions`, and product and automatic-promotion documents beneath numeric `catalogRevisions`. Client writes and all other reads remain denied. This narrow public read surface supports guest storefront browsing; it is safe only if the trusted publisher places public data in these immutable revision paths and never puts drafts, discount-code digests, customer assignments, redemptions, or private assets there. `storage.rules` still deny all client access. These rules have not been emulator-tested or deployed, and Firestore reads will continue to fail under the currently deployed deny-all rules until you deploy the reviewed file.
 
 ## Required authorization boundaries
 
-- Public clients may read only published manifests, immutable public catalogue/configuration revisions, and public book metadata.
+- Public clients may read only published manifests, immutable public catalogue/configuration revisions, automatic promotion display data, and public book metadata. Discount-code digests and redemption information are never public.
 - Clients may not write publication manifests, published snapshots, product publication status, prices, stock reservations, entitlements, payment events, subscription state, moderation outcomes, role assignments, audit events, or private book assets.
 - Parent data must be scoped to the authenticated parent UID. Child profiles, reading progress, bookmarks, orders, and privacy requests must be checked against parent ownership in a trusted service.
 - Drafts and unpublished assets are staff-only. Role changes and publisher/moderator operations require trusted server authorization and audit records.

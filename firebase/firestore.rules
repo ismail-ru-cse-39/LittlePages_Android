@@ -18,6 +18,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Published automatic discounts and banner content are public catalogue data.
+    // Discount-code hashes, customer assignments, and redemption records stay denied below.
+    match /catalogRevisions/{revisionId}/promotions/{promotionId} {
+      allow get, list: if revisionId.matches('^[1-9][0-9]*$');
+      allow write: if false;
+    }
+
     // All user, staff, draft, payment, entitlement, moderation, and other data stays closed.
     match /{document=**} {
       allow read, write: if false;

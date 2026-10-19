@@ -2,6 +2,7 @@ const LANGUAGE_KEY = 'littlepages-site-language-v1';
 const CONTENT_CACHE_KEY = 'littlepages-site-publication-cache-v1';
 let configuration;
 let products = [];
+let promotions = [];
 let activeManifest;
 let publicationRefreshPending = false;
 let language = localStorage.getItem(LANGUAGE_KEY) === 'bn' ? 'bn' : 'en';
@@ -83,7 +84,8 @@ function validateManifest(manifest) {
 
 async function validateSnapshot(manifest, snapshot) {
   if (snapshot?.schemaVersion !== 1 || snapshot.configuration?.schemaVersion !== 1 ||
-      snapshot.configuration.revision !== manifest.configurationRevision || !Array.isArray(snapshot.products)) {
+      snapshot.configuration.revision !== manifest.configurationRevision || !Array.isArray(snapshot.products) ||
+      (snapshot.promotions != null && !Array.isArray(snapshot.promotions))) {
     throw new Error('The published snapshot does not match its manifest.');
   }
   validatePublicationReferences(manifest, snapshot);
@@ -117,6 +119,7 @@ function validatePublicationReferences(manifest, snapshot) {
   const categoryIds = uniqueIds(catalog.productCategories, 'Category');
   const pageIds = uniqueIds(catalog.storePages, 'Page');
   const productIds = uniqueIds(snapshot.products, 'Product');
+  const promotionIds = uniqueIds(snapshot.promotions ?? [], 'Promotion');
   const enabledTypeIds = new Set(catalog.productTypes.filter(type => type.enabled).map(type => type.id));
   const enabledPageIds = new Set(catalog.storePages.filter(page => page.enabled).map(page => page.id));
   const categoryById = new Map(catalog.productCategories.map(category => [category.id, category]));
@@ -164,12 +167,30 @@ function validatePublicationReferences(manifest, snapshot) {
     requireLocalized(product.title, `Product ${product.id}`);
     requireLocalized(product.description, `Product ${product.id} description`);
     if (!enabledTypeIds.has(product.typeId)) throw new Error(`Product ${product.id} uses an unavailable type.`);
+    const productType = catalog.productTypes.find(type => type.id === product.typeId);
+    if (productType?.renderer === 'book_v1' && (!product.bookDetails || !['0-2', '3-5', '6-8', '9-12'].includes(product.bookDetails.ageBand) || !product.bookDetails.readingLevel?.trim() || !Number.isInteger(product.bookDetails.pageCount) || product.bookDetails.pageCount < 1 || !Number.isInteger(product.bookDetails.contentVersion) || product.bookDetails.contentVersion < 1 || !['free', 'premium', 'paid'].includes(product.bookDetails.access) || product.bookDetails.pdfInAppEnabled !== true || !Array.isArray(product.bookDetails.locales) || !product.bookDetails.locales.length || product.bookDetails.locales.some(locale => !['en', 'bn'].includes(locale)))) throw new Error(`Book ${product.id} is missing valid book-specific details.`);
     if ((product.categoryIds ?? []).some(id => !categoryIds.has(id))) throw new Error(`Product ${product.id} references a missing category.`);
-    if (!Array.isArray(product.variants) || !product.variants.length || product.variants.some(variant =>
-      typeof variant.priceMinor !== 'number' || variant.priceMinor < 0 || variant.currency !== 'BDT' ||
+    if (!Array.isArray(product.variants) || !product.variants.length || new Set(product.variants.map(variant => variant.id)).size !== product.variants.length || product.variants.some(variant =>
+      typeof variant.id !== 'string' || !variant.id || !variant.label?.en?.trim() || !variant.label?.bn?.trim() || !Number.isSafeInteger(variant.priceMinor) || variant.priceMinor < 0 || variant.currency !== 'BDT' ||
+      !['in_stock', 'out_of_stock', 'preorder', 'not_applicable'].includes(variant.stockState) ||
       (variant.stockQuantity != null && (!Number.isInteger(variant.stockQuantity) || variant.stockQuantity < 0)))) {
       throw new Error(`Product ${product.id} has invalid variants or stock.`);
     }
+  });
+  (snapshot.promotions ?? []).forEach(promotion => {
+    requireLocalized(promotion.name, `Promotion ${promotion.id}`);
+    requireLocalized(promotion.banner?.text, `Promotion ${promotion.id} banner`);
+    if (!['scheduled', 'active', 'paused', 'archived'].includes(promotion.status)) throw new Error(`Promotion ${promotion.id} is not in a publishable status.`);
+    const start = Date.parse(promotion.schedule?.startsAt); const end = Date.parse(promotion.schedule?.endsAt);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) throw new Error(`Promotion ${promotion.id} has an invalid schedule.`);
+    if (!['all', 'product', 'categories'].includes(promotion.targeting?.kind)) throw new Error(`Promotion ${promotion.id} has an invalid target.`);
+    if (promotion.targeting.kind === 'product' && !productIds.has(promotion.targeting.productId)) throw new Error(`Promotion ${promotion.id} references a missing product.`);
+    if (promotion.targeting.kind === 'categories' && (!promotion.targeting.categoryIds?.length || promotion.targeting.categoryIds.some(id => !categoryIds.has(id)))) throw new Error(`Promotion ${promotion.id} references a missing category.`);
+    if (!['percentage', 'fixed_amount'].includes(promotion.discount?.type) || !Number.isInteger(promotion.discount?.value) || promotion.discount.value < 1 || (promotion.discount.type === 'percentage' && promotion.discount.value > 99)) throw new Error(`Promotion ${promotion.id} has an invalid discount.`);
+    if (promotion.discount.type === 'fixed_amount' && promotion.discount.currency !== 'BDT') throw new Error(`Promotion ${promotion.id} must use BDT.`);
+    const target = promotion.banner?.destination;
+    const validTarget = target?.kind === 'storefront' ? storeIds.has(target.targetId) : target?.kind === 'category' ? categoryIds.has(target.targetId) : target?.kind === 'product' ? productIds.has(target.targetId) : false;
+    if (!validTarget || promotion.stackingPolicy !== 'best_single_discount' || promotion.priceFloorMinor !== 1) throw new Error(`Promotion ${promotion.id} has an invalid banner destination or price policy.`);
   });
 }
 
@@ -182,6 +203,7 @@ function canonicalJson(value) {
 function activatePublication(manifest, snapshot) {
   configuration = snapshot.configuration;
   products = snapshot.products;
+  promotions = snapshot.promotions ?? [];
   activeManifest = manifest;
 }
 
@@ -251,6 +273,7 @@ function renderStorePage() {
   const pageTitle = localized(page?.title) || localized(store.title);
   const description = localized(store.description) || copy('A thoughtful collection for curious little minds.', 'কৌতূহলী ছোট্ট মনগুলোর জন্য যত্নে সাজানো সংগ্রহ।');
   content.append(renderHero(store, pageTitle, description));
+  renderPromotionBanners(store).forEach(banner => content.append(banner));
   const blocks = page?.blocks ?? [];
   if (!blocks.length) content.append(renderCollection(store, null));
   blocks.forEach(block => {
@@ -288,6 +311,57 @@ function renderBlockHero(block) {
   const section = document.createElement('section'); section.className = 'editorial-banner';
   section.append(node('span', '✿', 'editorial-mark'), node('h2', localized(block.title)));
   return section;
+}
+
+function activePromotions() {
+  const now = Date.now();
+  return promotions.filter(promotion => ['active', 'scheduled'].includes(promotion.status) &&
+    Date.parse(promotion.schedule.startsAt) <= now && now < Date.parse(promotion.schedule.endsAt));
+}
+
+function promotionApplies(promotion, product) {
+  const target = promotion.targeting;
+  if (target.kind === 'all') return true;
+  if (target.kind === 'product') return product.id === target.productId;
+  return target.categoryIds.some(id => (product.categoryIds ?? []).includes(id));
+}
+
+function bestDiscount(product) {
+  const variant = product.variants?.[0];
+  const originalMinor = variant?.priceMinor;
+  if (!Number.isInteger(originalMinor) || originalMinor <= 1) return null;
+  const candidates = activePromotions().filter(promotion => promotionApplies(promotion, product)).map(promotion => {
+    const requested = promotion.discount.type === 'percentage'
+      ? Math.floor(originalMinor * promotion.discount.value / 100)
+      : promotion.discount.value;
+    const savingsMinor = Math.min(Math.max(0, originalMinor - 1), requested);
+    return { promotion, originalMinor, priceMinor: Math.max(1, originalMinor - savingsMinor), savingsMinor };
+  }).filter(item => item.savingsMinor > 0);
+  candidates.sort((a, b) => b.savingsMinor - a.savingsMinor || a.promotion.id.localeCompare(b.promotion.id));
+  return candidates[0] ?? null;
+}
+
+function renderPromotionBanners(store) {
+  return activePromotions().filter(promotion => {
+    const destination = promotion.banner.destination;
+    if (destination.kind === 'storefront') return destination.targetId === store.id;
+    if (destination.kind === 'category') return store.categoryIds.includes(destination.targetId);
+    const product = products.find(item => item.id === destination.targetId && item.status === 'published');
+    return Boolean(product && store.productTypeIds.includes(product.typeId));
+  }).map(promotion => {
+    const banner = document.createElement('section'); banner.className = 'promotion-banner';
+    banner.append(node('span', copy('LIMITED-TIME OFFER', 'সীমিত সময়ের অফার'), 'eyebrow'), node('h2', localized(promotion.banner.text)));
+    const action = node('button', copy('Explore offer', 'অফার দেখুন'), 'button button-primary'); action.type = 'button';
+    action.addEventListener('click', () => {
+      const destination = promotion.banner.destination;
+      if (destination.kind === 'category') activeCategoryId = destination.targetId;
+      else if (destination.kind === 'product') { const product = products.find(item => item.id === destination.targetId); if (product) showProduct(product); }
+      else if (destination.kind === 'storefront' && destination.targetId !== currentStoreId) { selectStore(destination.targetId); return; }
+      renderStorePage();
+      document.getElementById('collection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    banner.append(action); return banner;
+  });
 }
 
 function renderCategoryRail(store, block) {
@@ -336,7 +410,7 @@ function renderProductCard(product) {
   if (isBook) {
     const cover = document.createElement('div'); cover.className = 'book-cover';
     cover.append(node('small', 'LITTLEPAGES'), node('span', artwork(product.id), 'cover-animal'), node('b', localized(product.title)));
-    art.append(node('span', copy('IN APP', 'অ্যাপে'), 'badge'), cover);
+    art.append(node('span', localized({ en: product.bookDetails?.access === 'premium' ? 'PREMIUM' : 'IN APP', bn: product.bookDetails?.access === 'premium' ? 'প্রিমিয়াম' : 'অ্যাপে' }), 'badge'), cover);
   } else {
     art.classList.add('physical-product-art');
     art.append(node('span', artwork(product.id), 'physical-product-symbol'), node('span', copy('PHYSICAL ITEM', 'বাস্তব পণ্য'), 'badge'));
@@ -345,8 +419,13 @@ function renderProductCard(product) {
   const author = product.attributes?.author || localized(configuration.catalog.productTypes.find(type => type.id === product.typeId)?.label) || '';
   details.append(node('div', author, 'card-meta'), node('h3', localized(product.title)), node('p', localized(product.description)));
   const price = product.variants?.[0]?.priceMinor;
+  const sale = bestDiscount(product);
   const foot = document.createElement('div'); foot.className = 'card-foot';
-  foot.append(node('span', isBook ? copy('Read in app', 'অ্যাপে পড়ুন') : price > 0 ? `৳${(price / 100).toLocaleString(language === 'bn' ? 'bn-BD' : 'en-BD')}` : copy('View item', 'পণ্য দেখুন'), 'read-label'), node('span', '↗', 'round-arrow'));
+  if (sale) {
+    foot.append(priceLabels(sale));
+    const badge = node('span', localized(sale.promotion.name), 'sale-badge'); details.append(badge);
+  } else foot.append(node('span', price > 0 ? formatPrice(price) : isBook ? copy('Read in app', 'অ্যাপে পড়ুন') : copy('View item', 'পণ্য দেখুন'), 'read-label'));
+  foot.append(node('span', '↗', 'round-arrow'));
   details.append(foot); card.append(art, details);
   const open = () => showProduct(product); card.addEventListener('click', open); card.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
   return card;
@@ -358,13 +437,25 @@ function showProduct(product) {
   const isBook = configuration.catalog.productTypes.find(type => type.id === product.typeId)?.renderer === 'book_v1';
   details.append(node('span', product.attributes?.author || localized(configuration.catalog.productTypes.find(type => type.id === product.typeId)?.label) || copy('LITTLEPAGES STORY', 'লিটলপেজেসের গল্প'), 'dialog-meta'));
   details.append(node('h2', localized(product.title)), node('p', localized(product.description)));
-  const age = product.attributes?.age_band ?? product.attributes?.ageBand;
-  const pageCount = product.attributes?.page_count ?? product.attributes?.pageCount;
-  if (age || pageCount) details.append(node('div', [age ? `${copy('Ages', 'বয়স')} ${age}` : '', pageCount ? `${pageCount} ${copy('pages', 'পৃষ্ঠা')}` : ''].filter(Boolean).join(' · '), 'dialog-meta'));
-  if (!isBook && product.variants?.[0]) details.append(node('div', `${copy('Price', 'মূল্য')}: ৳${(product.variants[0].priceMinor / 100).toLocaleString(language === 'bn' ? 'bn-BD' : 'en-BD')}`, 'dialog-meta'));
+  const age = product.bookDetails?.ageBand ?? product.attributes?.age_band ?? product.attributes?.ageBand;
+  const pageCount = product.bookDetails?.pageCount ?? product.attributes?.page_count ?? product.attributes?.pageCount;
+  const readingLevel = product.bookDetails?.readingLevel;
+  if (age || pageCount || readingLevel) details.append(node('div', [age ? `${copy('Ages', 'বয়স')} ${age}` : '', pageCount ? `${pageCount} ${copy('pages', 'পৃষ্ঠা')}` : '', readingLevel].filter(Boolean).join(' · '), 'dialog-meta'));
+  if (isBook && product.bookDetails) details.append(node('div', `${copy('Access', 'অ্যাক্সেস')}: ${product.bookDetails.access}`, 'dialog-meta'));
+  const sale = bestDiscount(product);
+  if (sale) { details.append(priceLabels(sale, true), node('div', localized(sale.promotion.name), 'sale-badge')); }
+  else if (product.variants?.[0]?.priceMinor > 0) details.append(node('div', `${copy('Price', 'মূল্য')}: ${formatPrice(product.variants[0].priceMinor)}`, 'dialog-meta'));
   details.append(node('div', copy('This website is a preview. Reading access and checkout will be available when the shared account and publishing services are connected.', 'এটি ওয়েবসাইটের নমুনা। শেয়ার করা অ্যাকাউন্ট ও প্রকাশনা সেবা চালু হলে পড়া ও কেনাকাটা পাওয়া যাবে।'), 'dialog-note'));
   byId('productDialog').showModal();
 }
+
+function priceLabels(sale, dialog = false) {
+  const labels = document.createElement('span'); labels.className = `sale-prices${dialog ? ' dialog-sale-prices' : ''}`;
+  labels.append(node('strong', formatPrice(sale.priceMinor)), node('del', formatPrice(sale.originalMinor)));
+  return labels;
+}
+
+function formatPrice(minor) { return `৳${(minor / 100).toLocaleString(language === 'bn' ? 'bn-BD' : 'en-BD', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 
 function activeCategories(store) {
   const ids = new Set(store.categoryIds);

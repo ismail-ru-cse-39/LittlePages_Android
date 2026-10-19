@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://littlepages.example/contracts/promotions/v1.json",
+  "title": "LittlePages promotions and discount codes v1",
+  "description": "Published automatic discounts are public catalogue data. Discount-code definitions are private trusted-service records; raw codes are never stored and production codeHash values are keyed HMAC-SHA-256 digests.",
+  "$defs": {
+    "LocalizedLabel": {
+      "type": "object",
+      "required": ["en", "bn"],
+      "properties": {
+        "en": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "bn": { "type": "string", "minLength": 1, "maxLength": 120 }
+      },
+      "additionalProperties": false
+    },
+    "Targeting": {
+      "oneOf": [
+        { "type": "object", "required": ["kind", "productId"], "properties": { "kind": { "const": "product" }, "productId": { "type": "string", "pattern": "^[a-z0-9_-]{2,60}$" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind", "categoryIds"], "properties": { "kind": { "const": "categories" }, "categoryIds": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9_-]{2,60}$" }, "minItems": 1, "uniqueItems": true } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "all" } }, "additionalProperties": false }
+      ]
+    },
+    "Discount": {
+      "type": "object",
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "enum": ["percentage", "fixed_amount"] },
+        "value": { "type": "integer", "minimum": 1 },
+        "currency": { "const": "BDT" }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "percentage" } } }, "then": { "properties": { "value": { "maximum": 99 } } } },
+        { "if": { "properties": { "type": { "const": "fixed_amount" } } }, "then": { "required": ["currency"] } }
+      ],
+      "additionalProperties": false
+    },
+    "Schedule": {
+      "type": "object",
+      "required": ["startsAt", "endsAt"],
+      "properties": {
+        "startsAt": { "type": "string", "format": "date-time" },
+        "endsAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "title": "Automatic promotion",
+      "type": "object",
+      "required": ["id", "status", "name", "targeting", "discount", "schedule", "banner", "stackingPolicy", "priceFloorMinor"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9_-]{2,60}$" },
+        "status": { "enum": ["draft", "scheduled", "active", "paused", "archived"] },
+        "name": { "$ref": "#/$defs/LocalizedLabel" },
+        "targeting": { "$ref": "#/$defs/Targeting" },
+        "discount": { "$ref": "#/$defs/Discount" },
+        "schedule": { "$ref": "#/$defs/Schedule" },
+        "banner": {
+          "type": "object", "required": ["text", "destination"],
+          "properties": {
+            "text": { "$ref": "#/$defs/LocalizedLabel" },
+            "imageAssetId": { "type": ["string", "null"], "maxLength": 120 },
+            "destination": { "type": "object", "required": ["kind", "targetId"], "properties": { "kind": { "enum": ["storefront", "category", "product"] }, "targetId": { "type": "string", "pattern": "^[a-z0-9_-]{2,60}$" } }, "additionalProperties": false }
+          },
+          "additionalProperties": false
+        },
+        "stackingPolicy": { "const": "best_single_discount" },
+        "priceFloorMinor": { "const": 1 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    {
+      "title": "Private discount-code definition",
+      "description": "Store only a keyed HMAC-SHA-256 code digest. Never expose this document to customer clients. Code redemption and counters are transactional server operations.",
+      "type": "object",
+      "required": ["id", "campaignId", "codeHash", "mode", "status", "targeting", "discount", "schedule", "eligibility", "perCustomerLimit", "stackingPolicy", "priceFloorMinor"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9_-]{2,80}$" },
+        "campaignId": { "type": "string", "pattern": "^[a-z0-9_-]{2,80}$" },
+        "codeHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "mode": { "enum": ["shared", "unique"] },
+        "status": { "enum": ["draft", "scheduled", "active", "paused", "archived"] },
+        "targeting": { "$ref": "#/$defs/Targeting" },
+        "discount": { "$ref": "#/$defs/Discount" },
+        "schedule": { "$ref": "#/$defs/Schedule" },
+        "eligibility": { "enum": ["any", "new_customer", "assigned_account"] },
+        "assignedCustomerIds": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 128 }, "uniqueItems": true, "maxItems": 10000 },
+        "totalRedemptionLimit": { "type": ["integer", "null"], "minimum": 1 },
+        "perCustomerLimit": { "type": "integer", "minimum": 1 },
+        "stackingPolicy": { "const": "best_single_discount" },
+        "priceFloorMinor": { "const": 1 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "allOf": [
+        { "if": { "properties": { "eligibility": { "const": "assigned_account" } } }, "then": { "required": ["assignedCustomerIds"], "properties": { "assignedCustomerIds": { "minItems": 1 } } } }
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

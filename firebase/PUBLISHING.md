@@ -10,6 +10,7 @@ Use structured, revisioned records and keep document size and query load bounded
 - Versioned **configuration** for policies that affect presentation and supported behavior, such as storefront visibility, categories, product-type schemas, page blocks, and non-security business settings.
 - **Products and product-specific data** with stable IDs. Reader assets, entitlements, and reading progress stay in book-specific services/models.
 - Private drafts and immutable published snapshots, so clients can continue using one pinned revision while administrators prepare the next one.
+- Automatic discounts and banners are versioned with the public catalogue. Private discount-code definitions and customer redemptions stay in trusted service collections and never enter public snapshots.
 
 The manifest is the shared revision pointer. It is validated and published only by the trusted admin service. Admins can preview draft content against Android/iOS/web block registries before publishing. A publish produces an immutable revision, audit entry, content hash, and then advances the manifest. Rollback advances the pointer to a known good snapshot as a new publication revision; it does not erase history.
 
@@ -22,13 +23,13 @@ The manifest is the shared revision pointer. It is validated and published only 
 5. It swaps snapshots atomically after all needed data is available. On network failure or unsupported data, it keeps the last valid cached revision and reports the issue; it never displays a partially applied publish.
 6. A newly published change becomes visible across connected clients after they receive and activate that revision. Offline clients update when they reconnect. No remote system can force an already-offline device to refresh.
 
-**Current Android status:** the app fetches at startup, listens to `publicConfiguration/current`, and refreshes after a validated network reconnection or a subsequent foreground resume. Equivalent iOS/web listeners are still pending. Firestore rules and published records must be deployed before the remote flow can be exercised; until then the Android repository uses its bundled preview or last valid cache.
+**Current Android status:** the app fetches at startup, reads pinned canonical products and public promotions, translates shared configuration/product records into its native cache model, listens to `publicConfiguration/current`, and refreshes after a validated network reconnection or a subsequent foreground resume. The website preview reads the shared pinned demo snapshot and revalidates on tab visibility; live APIs and equivalent iOS adapters remain pending. Firestore rules and published records must be deployed before Android remote reads can be exercised; until then the repository uses its bundled preview or last valid cache.
 
 Public catalogue/content reads may be cached by revision. Account, child data, entitlement, checkout, inventory reservation, payment verification, and moderation actions use authenticated trusted services and are never authorized by the manifest or client cache.
 
 ## Admin write API contract
 
-The admin browser must call a trusted service using an authenticated staff identity. The client never writes the published manifest, roles, audit records, payment state, inventory reservation state, or private book files directly.
+The admin browser must call a trusted service using an authenticated staff identity. The client never writes the published manifest, roles, audit records, payment state, inventory reservation state, or private book files directly. Initial callable source now exists in `functions/index.mjs`: save a private draft against a base publication revision, validate and preview it, record an administrator approval, publish immutable configuration/catalogue/product/promotion documents, and roll back by advancing the pointer to an earlier verified snapshot. Only products marked `published` and promotions marked `active` or `scheduled` enter public revision collections. Browser integration and deployment remain open.
 
 | Operation | Expected behavior |
 |---|---|
@@ -38,7 +39,7 @@ The admin browser must call a trusted service using an authenticated staff ident
 | Publish | Require staff permission and publish approval; create immutable snapshot and audit event, then advance manifest |
 | Roll back | Create a new publication revision pointing to a validated known-good snapshot; preserve the audit trail |
 
-Publishing must detect concurrent edits. If the base revision changed while an admin edited, reject or require an explicit rebase; never silently overwrite another administrator's publish.
+Publishing must detect concurrent edits. If the base revision changed while an admin edited, reject or require an explicit rebase; never silently overwrite another administrator's publish. The current callable implementation rejects stale base and draft revisions. Publication validation enforces supported renderers and blocks, localized references, policy invariants, bounds, and the v1 promotion contract. It does not verify book rights evidence, uploaded asset bytes, or cross-platform renderer parity; those need trusted review and platform work before the broad publishing task is complete.
 
 ## Rollout and compatibility
 

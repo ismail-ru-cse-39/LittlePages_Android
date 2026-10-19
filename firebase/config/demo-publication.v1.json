@@ -113,24 +113,6 @@
               },
               "valueType": "text",
               "required": true
-            },
-            {
-              "id": "age_band",
-              "label": {
-                "en": "Recommended age",
-                "bn": "প্রস্তাবিত বয়স"
-              },
-              "valueType": "text",
-              "required": true
-            },
-            {
-              "id": "page_count",
-              "label": {
-                "en": "Page count",
-                "bn": "পৃষ্ঠা সংখ্যা"
-              },
-              "valueType": "number",
-              "required": false
             }
           ],
           "enabled": true
@@ -394,6 +376,7 @@
       "requiresOwnerReview": true
     }
   },
+  "promotions": [],
   "products": [
     {
       "id": "brave-little-fox",
@@ -426,10 +409,9 @@
         }
       ],
       "attributes": {
-        "author": "Emma Clarke",
-        "age_band": "3-7",
-        "page_count": 24
-      }
+        "author": "Emma Clarke"
+      },
+      "bookDetails": { "ageBand": "3-5", "readingLevel": "Early reader", "seriesId": null, "seriesOrder": null, "pageCount": 24, "locales": ["en", "bn"], "contentVersion": 1, "access": "free", "pdfInAppEnabled": true, "physicalEdition": { "available": false, "variantId": null } }
     },
     {
       "id": "day-at-the-lake",
@@ -461,10 +443,9 @@
         }
       ],
       "attributes": {
-        "author": "Mina Rahman",
-        "age_band": "4-8",
-        "page_count": 20
-      }
+        "author": "Mina Rahman"
+      },
+      "bookDetails": { "ageBand": "3-5", "readingLevel": "Early reader", "seriesId": null, "seriesOrder": null, "pageCount": 20, "locales": ["en", "bn"], "contentVersion": 1, "access": "free", "pdfInAppEnabled": true, "physicalEdition": { "available": false, "variantId": null } }
     },
     {
       "id": "kind-giant",
@@ -496,10 +477,9 @@
         }
       ],
       "attributes": {
-        "author": "Oliver Reed",
-        "age_band": "5-9",
-        "page_count": 28
-      }
+        "author": "Oliver Reed"
+      },
+      "bookDetails": { "ageBand": "6-8", "readingLevel": "Early reader", "seriesId": null, "seriesOrder": null, "pageCount": 28, "locales": ["en", "bn"], "contentVersion": 1, "access": "free", "pdfInAppEnabled": true, "physicalEdition": { "available": false, "variantId": null } }
     },
     {
       "id": "woodland-blocks",

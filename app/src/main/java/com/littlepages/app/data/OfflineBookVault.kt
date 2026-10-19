@@ -30,26 +30,45 @@ import javax.crypto.spec.GCMParameterSpec
  * The caller must verify the current account's access grant with the trusted service
  * before calling [put]. Expiry here is a local safety check, not proof of entitlement.
  */
-internal class OfflineBookVault(context: Context) {
+internal class OfflineBookVault(
+    context: Context,
+    private val policy: OfflineBookAccessPolicy = OfflineBookAccessPolicy()
+) {
     private val directory = File(context.noBackupFilesDir, DIRECTORY_NAME).apply { mkdirs() }
 
     @Throws(IOException::class)
-    fun put(bookId: String, expiresAtEpochMillis: Long, clearContent: InputStream) {
+    @Synchronized
+    fun put(
+        accountId: String,
+        bookId: String,
+        expiresAtEpochMillis: Long,
+        clearContent: InputStream,
+        entitlementExpiresAtEpochMillis: Long? = null
+    ) {
+        require(accountId.isNotBlank()) { "accountId must not be blank" }
         require(bookId.isNotBlank()) { "bookId must not be blank" }
-        require(expiresAtEpochMillis > System.currentTimeMillis()) { "Offline access grant has expired" }
+        val now = System.currentTimeMillis()
+        require(expiresAtEpochMillis > now) { "Offline access grant has expired" }
+        require(expiresAtEpochMillis - now <= policy.maximumLeaseMillis) { "Offline access grant exceeds the allowed lease" }
+        val effectiveExpiry = if (policy.removeWhenEntitlementExpires && entitlementExpiresAtEpochMillis != null) {
+            minOf(expiresAtEpochMillis, entitlementExpiresAtEpochMillis)
+        } else expiresAtEpochMillis
+        require(effectiveExpiry > now) { "Book entitlement has expired" }
 
-        val target = fileFor(bookId)
-        val temporary = File(directory, "${target.name}.pending")
+        val target = fileFor(accountId, bookId)
+        removeExpiredCopies(accountId)
+        require(policy.canAddBook(storedBookCount(accountId), target.exists())) { "Offline book limit reached" }
+        val temporary = File(target.parentFile, "${target.name}.pending")
         val cipher = Cipher.getInstance(TRANSFORMATION).apply {
             init(Cipher.ENCRYPT_MODE, getOrCreateKey())
-            updateAAD(aad(bookId, expiresAtEpochMillis))
+            updateAAD(aad(accountId, bookId, effectiveExpiry))
         }
 
         try {
             FileOutputStream(temporary).use { fileOutput ->
                 DataOutputStream(fileOutput).apply {
                     writeInt(FILE_MAGIC)
-                    writeLong(expiresAtEpochMillis)
+                    writeLong(effectiveExpiry)
                     writeByte(cipher.iv.size)
                     write(cipher.iv)
                     flush()
@@ -58,7 +77,7 @@ internal class OfflineBookVault(context: Context) {
                     override fun close() = flush()
                 }
                 CipherOutputStream(nonClosingOutput, cipher).use { encryptedOutput ->
-                    clearContent.copyTo(encryptedOutput, BUFFER_SIZE)
+                    copyWithLimit(clearContent, encryptedOutput, policy.maximumBookBytes)
                 }
                 fileOutput.fd.sync()
             }
@@ -75,9 +94,10 @@ internal class OfflineBookVault(context: Context) {
     }
 
     @Throws(IOException::class)
-    fun open(bookId: String): InputStream {
+    fun open(accountId: String, bookId: String): InputStream {
+        require(accountId.isNotBlank()) { "accountId must not be blank" }
         require(bookId.isNotBlank()) { "bookId must not be blank" }
-        val file = fileFor(bookId)
+        val file = fileFor(accountId, bookId)
         val headerInput = DataInputStream(FileInputStream(file))
         try {
             if (headerInput.readInt() != FILE_MAGIC) throw IOException("Unsupported offline book file")
@@ -86,14 +106,15 @@ internal class OfflineBookVault(context: Context) {
             if (ivLength !in MIN_IV_LENGTH..MAX_IV_LENGTH) throw IOException("Invalid encrypted book header")
             val iv = ByteArray(ivLength)
             headerInput.readFully(iv)
-            if (expiresAt <= System.currentTimeMillis()) {
+            val now = System.currentTimeMillis()
+            if (expiresAt <= now || expiresAt - now > policy.maximumLeaseMillis) {
                 headerInput.close()
                 file.delete()
                 throw OfflineBookExpiredException()
             }
             val cipher = Cipher.getInstance(TRANSFORMATION).apply {
                 init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
-                updateAAD(aad(bookId, expiresAt))
+                updateAAD(aad(accountId, bookId, expiresAt))
             }
             return CipherInputStream(headerInput, cipher)
         } catch (failure: Exception) {
@@ -103,22 +124,93 @@ internal class OfflineBookVault(context: Context) {
         }
     }
 
-    fun hasUnexpiredOfflineCopy(bookId: String): Boolean {
-        val file = fileFor(bookId)
+    fun hasUnexpiredOfflineCopy(accountId: String, bookId: String): Boolean {
+        require(accountId.isNotBlank()) { "accountId must not be blank" }
+        require(bookId.isNotBlank()) { "bookId must not be blank" }
+        val file = fileFor(accountId, bookId)
         if (!file.isFile) return false
         return runCatching {
-            DataInputStream(FileInputStream(file)).use { input ->
-                input.readInt() == FILE_MAGIC && input.readLong() > System.currentTimeMillis()
-            }
+            DataInputStream(FileInputStream(file)).use { input -> readValidExpiry(input) != null }
         }.getOrDefault(false).also { valid -> if (!valid) file.delete() }
     }
 
-    fun remove(bookId: String): Boolean = !fileFor(bookId).exists() || fileFor(bookId).delete()
+    @Synchronized
+    fun remove(accountId: String, bookId: String): Boolean {
+        require(accountId.isNotBlank()) { "accountId must not be blank" }
+        require(bookId.isNotBlank()) { "bookId must not be blank" }
+        val file = fileFor(accountId, bookId)
+        return !file.exists() || file.delete()
+    }
 
-    private fun fileFor(bookId: String): File {
-        val digest = MessageDigest.getInstance("SHA-256").digest(bookId.toByteArray(StandardCharsets.UTF_8))
-        val stableName = digest.joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
-        return File(directory, "$stableName.book")
+    @Synchronized
+    fun storedBookCount(accountId: String): Int {
+        require(accountId.isNotBlank()) { "accountId must not be blank" }
+        removeExpiredCopies(accountId)
+        return accountDirectory(accountId).listFiles { file -> file.isFile && file.extension == "book" }?.size ?: 0
+    }
+
+    @Synchronized
+    fun storedBytes(accountId: String): Long {
+        require(accountId.isNotBlank()) { "accountId must not be blank" }
+        removeExpiredCopies(accountId)
+        return accountDirectory(accountId).listFiles { file -> file.isFile && file.extension == "book" }?.sumOf { it.length() } ?: 0L
+    }
+
+    /** Remove expired or unreadable entries for the signed-in account. */
+    @Synchronized
+    fun removeExpiredCopies(accountId: String): Int {
+        require(accountId.isNotBlank()) { "accountId must not be blank" }
+        val accountFiles = accountDirectory(accountId).listFiles() ?: return 0
+        val books = accountFiles.filter { it.isFile && it.extension == "book" }
+        val expiredRemoved = books.count { file ->
+            val isValid = runCatching {
+                DataInputStream(FileInputStream(file)).use { input -> readValidExpiry(input) != null }
+            }.getOrDefault(false)
+            !isValid && file.delete()
+        }
+        val abandonedWritesRemoved = accountFiles.filter { it.isFile && it.name.endsWith(".pending") }.count { it.delete() }
+        return expiredRemoved + abandonedWritesRemoved
+    }
+
+    /** Explicit account removal also removes all cached offline books for that account. */
+    @Synchronized
+    fun removeAccount(accountId: String): Boolean {
+        require(accountId.isNotBlank()) { "accountId must not be blank" }
+        val accountDirectory = accountDirectory(accountId)
+        return !accountDirectory.exists() || accountDirectory.deleteRecursively()
+    }
+
+    private fun fileFor(accountId: String, bookId: String): File {
+        return File(accountDirectory(accountId), "${stableHash(bookId)}.book")
+    }
+
+    private fun accountDirectory(accountId: String): File = File(directory, stableHash(accountId)).apply { mkdirs() }
+
+    private fun stableHash(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(StandardCharsets.UTF_8))
+        return digest.joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    }
+
+    private fun copyWithLimit(input: InputStream, output: OutputStream, maximumBytes: Long) {
+        val buffer = ByteArray(BUFFER_SIZE)
+        var totalBytes = 0L
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            totalBytes += read
+            if (totalBytes > maximumBytes) throw IOException("Offline book exceeds the permitted file size")
+            output.write(buffer, 0, read)
+        }
+    }
+
+    private fun readValidExpiry(input: DataInputStream): Long? {
+        if (input.readInt() != FILE_MAGIC) return null
+        val expiresAt = input.readLong()
+        val ivLength = input.readUnsignedByte()
+        if (ivLength !in MIN_IV_LENGTH..MAX_IV_LENGTH) return null
+        input.readFully(ByteArray(ivLength))
+        val now = System.currentTimeMillis()
+        return expiresAt.takeIf { it > now && it - now <= policy.maximumLeaseMillis }
     }
 
     private fun getOrCreateKey(): SecretKey {
@@ -139,8 +231,8 @@ internal class OfflineBookVault(context: Context) {
         }
     }
 
-    private fun aad(bookId: String, expiresAt: Long): ByteArray =
-        "$bookId:$expiresAt".toByteArray(StandardCharsets.UTF_8)
+    private fun aad(accountId: String, bookId: String, expiresAt: Long): ByteArray =
+        "$accountId:$bookId:$expiresAt".toByteArray(StandardCharsets.UTF_8)
 
     private companion object {
         const val DIRECTORY_NAME = "offline-books"
@@ -155,4 +247,4 @@ internal class OfflineBookVault(context: Context) {
     }
 }
 
-internal class OfflineBookExpiredException : IOException("Offline access has expired. Connect to refresh access.")
+internal class OfflineBookExpiredException : IOException("Offline access is invalid or expired. Connect to refresh access.")

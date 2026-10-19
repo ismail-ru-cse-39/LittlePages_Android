@@ -67,6 +67,16 @@ import com.littlepages.app.data.NarrationAudioFocus
 import com.littlepages.app.data.NarrationState
 import com.littlepages.app.data.SamplePdfRenderer
 import com.littlepages.app.data.ManagedCategory
+import com.littlepages.app.data.ManagedPromotion
+import com.littlepages.app.data.ManagedProduct
+import com.littlepages.app.data.ManagedProductType
+import com.littlepages.app.data.ManagedStorePage
+import com.littlepages.app.data.ManagedPageBlock
+import com.littlepages.app.data.ManagedStorefront
+import com.littlepages.app.data.CollectionLayout
+import com.littlepages.app.data.ProductAttributeValue
+import com.littlepages.app.data.ProductAvailability
+import com.littlepages.app.data.PublishedStorefrontContentSource
 import com.littlepages.app.data.PreviewCatalogConfigurationSource
 import com.littlepages.app.data.FirestorePublishedStorefrontConfigurationRemote
 import com.littlepages.app.data.SharedPreferencesStorefrontConfigurationCache
@@ -97,9 +107,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
+import java.time.Instant
+import java.math.BigDecimal
+import java.math.RoundingMode
 
 private enum class Page {
-    Welcome, EmailAuth, EmailVerification, PasswordReset, PhoneAuth, PhoneCode, ParentSetup, Home, Library, Search, BookDetails, Reader, Listen, ListenPreview,
+    Welcome, EmailAuth, EmailVerification, PasswordReset, PhoneAuth, PhoneCode, ParentSetup, Home, Library, Search, BookDetails, PublishedProductDetails, Reader, Listen, ListenPreview,
     Community, Group, CreatePost, Reviews, Offline, Parent, Profiles, Privacy, Subscription,
     Checkout, OrderConfirmation, Recovery, Orders, Support
 }
@@ -156,6 +169,9 @@ fun LittlePagesApp() {
     var previewParentEmail by rememberSaveable { mutableStateOf("") }
     var lastPurchase by remember { mutableStateOf<PurchasePreview?>(null) }
     var selectedBook by remember { mutableStateOf(books.first()) }
+    var selectedPublishedProduct by remember { mutableStateOf<ManagedProduct?>(null) }
+    var selectedCatalogCategory by rememberSaveable { mutableStateOf("all") }
+    var selectedCatalogStorefrontId by rememberSaveable { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
     val appConfiguration = LocalConfiguration.current
     val useNavigationRail = appConfiguration.screenWidthDp >= PagesBreakpoints.WideLayoutWidth.value.toInt()
@@ -242,6 +258,15 @@ fun LittlePagesApp() {
         }
     }
     val managedConfiguration by configurationSource.configuration.collectAsState()
+    val publishedContentSource = configurationSource as? PublishedStorefrontContentSource
+    val publishedSnapshot = publishedContentSource?.publishedContent?.collectAsState()?.value
+    val publishedPromotions = publishedSnapshot?.promotions.orEmpty()
+    val publishedProducts = publishedSnapshot?.products?.filter { it.published }.orEmpty()
+    val publishedProductTypeIds = managedConfiguration.productTypes.filter { it.enabled && publishedProducts.any { product -> product.productTypeId == it.id } }.map { it.id }.toSet()
+    val publishedStorefrontIds = managedConfiguration.storefronts.filter { storefront -> storefront.enabled && storefront.productTypeIds.any(publishedProductTypeIds::contains) }.map { it.id }.toSet()
+    val landingPageId = managedConfiguration.storefronts.filter { it.enabled && it.navigationVisible }.minByOrNull { it.sortOrder }?.landingPageId
+    val publishedHomePage = managedConfiguration.storePages.firstOrNull { it.enabled && it.id == landingPageId }
+        ?: managedConfiguration.storePages.firstOrNull { it.enabled }
     val systemAnimationsEnabled = ValueAnimator.areAnimatorsEnabled()
     var hasInternet by remember(appContext) { mutableStateOf(true) }
     DisposableEffect(appContext) {
@@ -294,6 +319,19 @@ fun LittlePagesApp() {
     fun go(next: Page) { stack.add(next) }
     fun back() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
     fun showNotice(title: String, message: String) { noticeTitle = title; unavailableNotice = message }
+    fun openPublishedCatalog(categoryId: String = "all", storefrontId: String? = null) {
+        selectedCatalogCategory = categoryId
+        selectedCatalogStorefrontId = storefrontId
+        stack.clear(); stack.add(Page.Library)
+    }
+    fun openPromotionDestination(promotion: ManagedPromotion) {
+        when (promotion.destinationKind) {
+            "product" -> publishedProducts.firstOrNull { it.id == promotion.destinationId }?.let { selectedPublishedProduct = it; go(Page.PublishedProductDetails) } ?: openPublishedCatalog()
+            "category" -> openPublishedCatalog(categoryId = promotion.destinationId)
+            "storefront" -> openPublishedCatalog(storefrontId = promotion.destinationId)
+            else -> openPublishedCatalog()
+        }
+    }
     fun signOutFromAuth() {
         firebaseAuth?.signOut()
         coroutineScope.launch {
@@ -587,10 +625,11 @@ fun LittlePagesApp() {
                     }
                 }, onResend = { requestPhoneVerification(phoneRequestNumber, phoneResendToken) })
                 Page.ParentSetup -> ParentOnboardingScreen(email = pendingParentEmail.ifBlank { previewParentEmail }, onBack = ::back, onComplete = { name, email, child -> previewParentName = name; previewParentEmail = email; childProfiles.add(child); selectedChildId = child.id; parentPreviewMode = false; guestMode = false; stack.clear(); stack.add(Page.Home) })
-                Page.Home -> HomeScreen(continuePage = progressStore.page(activeChildId, books[0].title).coerceIn(1, 24), onBook = { selectedBook = it; go(Page.BookDetails) }, onContinue = { selectedBook = books[0]; go(Page.Reader) }, onLibrary = { stack.clear(); stack.add(Page.Library) }, onSearch = { go(Page.Search) }, onOffline = { go(Page.Offline) }, onPremium = { go(Page.Subscription) })
-                Page.Library -> LibraryScreen(categories = managedConfiguration.bookCategories, onBook = { selectedBook = it; go(Page.BookDetails) }, onSearch = { go(Page.Search) }, onOffline = { go(Page.Offline) })
-                Page.Search -> SearchScreen(query = query, categories = managedConfiguration.bookCategories, onQuery = { query = it }, onBook = { selectedBook = it; go(Page.BookDetails) }, onBack = ::back)
+                Page.Home -> HomeScreen(continuePage = if (publishedSnapshot == null) progressStore.page(activeChildId, books[0].title).coerceIn(1, 24) else null, publishedCatalogActive = publishedSnapshot != null, publishedPage = publishedHomePage, publishedProducts = publishedProducts, productTypes = managedConfiguration.productTypes, productCategories = managedConfiguration.productCategories.ifEmpty { managedConfiguration.bookCategories }, storefronts = managedConfiguration.storefronts, storefrontIds = publishedStorefrontIds, promotions = publishedPromotions, onBook = { selectedBook = it; go(Page.BookDetails) }, onProduct = { selectedPublishedProduct = it; go(Page.PublishedProductDetails) }, onPromotion = ::openPromotionDestination, onCategory = { openPublishedCatalog(categoryId = it) }, onStorefront = { openPublishedCatalog(storefrontId = it) }, onContinue = { selectedBook = books[0]; go(Page.Reader) }, onLibrary = { openPublishedCatalog() }, onSearch = { go(Page.Search) }, onOffline = { stack.clear(); stack.add(Page.Offline) }, onPremium = { go(Page.Subscription) })
+                Page.Library -> if (publishedSnapshot != null) PublishedCatalogScreen(products = publishedProducts, productTypes = managedConfiguration.productTypes, categories = managedConfiguration.productCategories.ifEmpty { managedConfiguration.bookCategories }, storefronts = managedConfiguration.storefronts, promotions = publishedPromotions, selectedCategoryId = selectedCatalogCategory, selectedStorefrontId = selectedCatalogStorefrontId, onCategory = { selectedCatalogCategory = it; selectedCatalogStorefrontId = null }, onProduct = { selectedPublishedProduct = it; go(Page.PublishedProductDetails) }, onSearch = { go(Page.Search) }, onOffline = { go(Page.Offline) }) else LibraryScreen(categories = managedConfiguration.bookCategories, onBook = { selectedBook = it; go(Page.BookDetails) }, onSearch = { go(Page.Search) }, onOffline = { go(Page.Offline) })
+                Page.Search -> SearchScreen(query = query, categories = managedConfiguration.productCategories.ifEmpty { managedConfiguration.bookCategories }, products = publishedProducts, promotions = publishedPromotions, usePublishedCatalog = publishedSnapshot != null, productTypes = managedConfiguration.productTypes, onQuery = { query = it }, onBook = { selectedBook = it; go(Page.BookDetails) }, onProduct = { selectedPublishedProduct = it; go(Page.PublishedProductDetails) }, onBack = ::back)
                 Page.BookDetails -> BookDetailsScreen(book = selectedBook, categories = managedConfiguration.bookCategories, saved = selectedBook.title in savedBooks, premiumUnlocked = premium, onPremiumRequired = { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else premiumPrompt = true }, onSave = { if (guestMode) unavailableNotice = "Create a parent account to save books." else if (selectedBook.title in savedBooks) savedBooks.remove(selectedBook.title) else savedBooks.add(selectedBook.title) }, onBack = ::back, onRead = { if (selectedBook.premiumOnly && !premium) { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else premiumPrompt = true } else go(Page.Reader) }, onListen = { if (guestMode) unavailableNotice = "Create a parent account to use Premium listening." else openPremiumFeature() }, onReviews = { go(Page.Reviews) }, onOrder = { if (guestMode) unavailableNotice = "Create a parent account to order books." else go(Page.Checkout) }, onRecovery = { recoveryType = "book"; go(Page.Recovery) })
+                Page.PublishedProductDetails -> selectedPublishedProduct?.let { product -> PublishedProductDetailsScreen(product = product, productTypes = managedConfiguration.productTypes, categories = managedConfiguration.productCategories.ifEmpty { managedConfiguration.bookCategories }, promotions = publishedPromotions, onBack = ::back, onUnavailable = { title, message -> showNotice(title, message) }) } ?: back()
                 Page.Reader -> ReaderScreen(book = selectedBook, mode = readerMode, page = currentPage, bookmarked = bookmarked, onBookmark = { bookmarked = progressStore.toggleBookmark(activeChildId, selectedBook.title, currentPage) }, onPage = { currentPage = it; progressStore.savePage(activeChildId, selectedBook.title, it) }, onMode = { readerMode = it }, onBack = ::back, onListen = ::openPremiumFeature, onPremium = { premiumPrompt = true })
                 Page.Listen -> ListenScreen(book = selectedBook, page = currentPage, autoplay = autoplay, onAutoplay = { autoplay = it }, onPageAdvance = { if (currentPage < 24) { currentPage += 1; progressStore.savePage(activeChildId, selectedBook.title, currentPage) } }, onBack = ::back)
                 Page.ListenPreview -> ListenScreen(book = selectedBook, page = currentPage, autoplay = false, onAutoplay = {}, onPageAdvance = {}, onBack = ::back, previewOnly = true)
@@ -772,29 +811,61 @@ private fun ParentOnboardingScreen(email: String, onBack: () -> Unit, onComplete
 }
 
 @Composable
-private fun HomeScreen(continuePage: Int, onBook: (Book) -> Unit, onContinue: () -> Unit, onLibrary: () -> Unit, onSearch: () -> Unit, onOffline: () -> Unit, onPremium: () -> Unit) {
+private fun HomeScreen(continuePage: Int?, publishedCatalogActive: Boolean, publishedPage: ManagedStorePage?, publishedProducts: List<ManagedProduct>, productTypes: List<ManagedProductType>, productCategories: List<ManagedCategory>, storefronts: List<ManagedStorefront>, storefrontIds: Set<String>, promotions: List<ManagedPromotion>, onBook: (Book) -> Unit, onProduct: (ManagedProduct) -> Unit, onPromotion: (ManagedPromotion) -> Unit, onCategory: (String) -> Unit, onStorefront: (String) -> Unit, onContinue: () -> Unit, onLibrary: () -> Unit, onSearch: () -> Unit, onOffline: () -> Unit, onPremium: () -> Unit) {
+    var currentTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) { while (true) { delay(60_000); currentTime = System.currentTimeMillis() } }
+    val language = LocalConfiguration.current.locales[0].language
+    val visiblePromotions = promotions.filter { promotion ->
+        val targetMatches = publishedProducts.any { product -> promotionTargetsProduct(promotion, product) }
+        val destinationMatches = when (promotion.destinationKind) {
+            "product" -> publishedProducts.any { it.id == promotion.destinationId }
+            "category" -> publishedProducts.any { promotion.destinationId in it.categoryIds }
+            "storefront" -> promotion.destinationId in storefrontIds
+            else -> false
+        }
+        promotion.status in setOf("active", "scheduled") && targetMatches && destinationMatches &&
+            runCatching { Instant.parse(promotion.startsAt).toEpochMilli() <= currentTime && Instant.parse(promotion.endsAt).toEpochMilli() > currentTime }.getOrDefault(false)
+    }
+    if (publishedCatalogActive) {
+        PublishedStoreHomeScreen(page = publishedPage, products = publishedProducts, productTypes = productTypes, categories = productCategories, storefronts = storefronts, promotions = visiblePromotions, now = currentTime, onProduct = onProduct, onPromotion = onPromotion, onCategory = onCategory, onStorefront = onStorefront, onLibrary = onLibrary, onSearch = onSearch)
+        return
+    }
     MainPage(title = "Good morning, Emma 👋", subtitle = "Ready for a new adventure?") {
         SearchBarCard(onSearch)
-        Spacer(Modifier.height(PagesSpacing.SectionGap))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) { SectionTitle("Continue reading"); AppText("The Brave Little Fox · $continuePage of 24 pages", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }
-            TextButton(onClick = onContinue) { AppText("Open", color = PagesColors.Forest, fontWeight = FontWeight.SemiBold) }
+        visiblePromotions.forEach { promotion ->
+            Spacer(Modifier.height(PagesSpacing.CardContent))
+            CardSurface(Modifier.fillMaxWidth().clickable(role = Role.Button) { onPromotion(promotion) }, color = PagesColors.Peach) {
+                Column {
+                    AppText(if (language == "bn") promotion.bannerText.bangla else promotion.bannerText.english, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    AppText(if (language == "bn") "পণ্য দেখুন" else "Browse products", color = PagesColors.Forest, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = PagesSpacing.Dense))
+                }
+            }
         }
-        Spacer(Modifier.height(PagesSpacing.Small))
-        CardSurface(Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onContinue)) {
+        if (!publishedCatalogActive && continuePage != null) {
+            Spacer(Modifier.height(PagesSpacing.SectionGap))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                BookCover(books[0], Modifier.size(width = PagesSizes.HomeBookCoverWidth, height = PagesSizes.HomeBookCoverHeight))
-                Column(Modifier.weight(1f).padding(start = PagesSpacing.CardContent)) {
-                    AppText(books[0].title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                    AppText("You’re doing great!", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
-                    LinearProgressIndicator(progress = { continuePage / 24f }, modifier = Modifier.fillMaxWidth().padding(top = PagesSpacing.CardContent), color = PagesColors.Forest, trackColor = PagesColors.Sage)
-                    AppText("${(continuePage * 100 / 24)}% complete", color = PagesColors.Forest, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = PagesSpacing.Dense))
+                Column(Modifier.weight(1f)) { SectionTitle("Continue reading"); AppText("The Brave Little Fox · $continuePage of 24 pages", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }
+                TextButton(onClick = onContinue) { AppText("Open", color = PagesColors.Forest, fontWeight = FontWeight.SemiBold) }
+            }
+            Spacer(Modifier.height(PagesSpacing.Small))
+            CardSurface(Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onContinue)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    BookCover(books[0], Modifier.size(width = PagesSizes.HomeBookCoverWidth, height = PagesSizes.HomeBookCoverHeight))
+                    Column(Modifier.weight(1f).padding(start = PagesSpacing.CardContent)) {
+                        AppText(books[0].title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        AppText("You’re doing great!", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
+                        LinearProgressIndicator(progress = { continuePage / 24f }, modifier = Modifier.fillMaxWidth().padding(top = PagesSpacing.CardContent), color = PagesColors.Forest, trackColor = PagesColors.Sage)
+                        AppText("${(continuePage * 100 / 24)}% complete", color = PagesColors.Forest, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = PagesSpacing.Dense))
+                    }
                 }
             }
         }
         Spacer(Modifier.height(PagesSpacing.Large))
         SectionTitle("Popular this week", "See all", onClick = onLibrary)
-        BookRow(books, onBook)
+        if (publishedCatalogActive) {
+            if (publishedProducts.isEmpty()) EmptyState(Icons.Filled.Inventory2, "The published catalogue is empty", "New items will appear here after they are published.")
+            else publishedProducts.take(4).forEach { product -> PublishedProductRow(product, productTypes, productCategories, promotions, currentTime, language) { onProduct(product) } }
+        } else BookRow(books, onBook)
         Spacer(Modifier.height(PagesSpacing.Medium))
         CardSurface(Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onPremium), color = PagesColors.Sage) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -806,6 +877,267 @@ private fun HomeScreen(continuePage: Int, onBook: (Book) -> Unit, onContinue: ()
         AppText("Offline book storage isn't set up yet", style = MaterialTheme.typography.bodySmall, color = PagesColors.Muted)
     }
 }
+
+@Composable
+private fun PublishedStoreHomeScreen(page: ManagedStorePage?, products: List<ManagedProduct>, productTypes: List<ManagedProductType>, categories: List<ManagedCategory>, storefronts: List<ManagedStorefront>, promotions: List<ManagedPromotion>, now: Long, onProduct: (ManagedProduct) -> Unit, onPromotion: (ManagedPromotion) -> Unit, onCategory: (String) -> Unit, onStorefront: (String) -> Unit, onLibrary: () -> Unit, onSearch: () -> Unit) {
+    val language = LocalConfiguration.current.locales[0].language
+    MainPage(title = page?.let { if (language == "bn") it.banglaTitle else it.englishTitle } ?: "LittlePages", subtitle = if (language == "bn") "প্রকাশিত বই ও পণ্য আবিষ্কার করুন।" else "Discover published books and products.") {
+        SearchBarCard(onSearch)
+        promotions.forEach { promotion ->
+            Spacer(Modifier.height(PagesSpacing.CardContent))
+            CardSurface(Modifier.fillMaxWidth().clickable(role = Role.Button) { onPromotion(promotion) }, color = PagesColors.Peach) {
+                Column {
+                    AppText(if (language == "bn") promotion.bannerText.bangla else promotion.bannerText.english, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    AppText(if (language == "bn") "পণ্য দেখুন" else "Browse products", color = PagesColors.Forest, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = PagesSpacing.Dense))
+                }
+            }
+        }
+        val blocks = page?.blocks.orEmpty()
+        if (blocks.isEmpty()) {
+            Spacer(Modifier.height(PagesSpacing.SectionGap))
+            SectionTitle(if (language == "bn") "প্রকাশিত পণ্য" else "Published products", "See all", onClick = onLibrary)
+            if (products.isEmpty()) EmptyState(Icons.Filled.Inventory2, "The published catalogue is empty", "New products will appear here after publication.")
+            products.take(6).forEach { product -> PublishedProductRow(product, productTypes, categories, promotions, now, language) { onProduct(product) } }
+        } else {
+            blocks.forEach { block ->
+                Spacer(Modifier.height(PagesSpacing.SectionGap))
+                when (block) {
+                    is ManagedPageBlock.EditorialText -> CardSurface(Modifier.fillMaxWidth(), color = PagesColors.Sage) {
+                        AppText(if (language == "bn") block.banglaBody else block.englishBody, style = MaterialTheme.typography.bodyLarge)
+                    }
+                    is ManagedPageBlock.Hero -> {
+                        val modifier = if (block.actionKind == null) Modifier.fillMaxWidth() else Modifier.fillMaxWidth().clickable(role = Role.Button) {
+                            when (block.actionKind) {
+                                "product" -> products.firstOrNull { it.id == block.actionTargetId }?.let(onProduct) ?: onLibrary()
+                                "category" -> block.actionTargetId?.let(onCategory) ?: onLibrary()
+                                "storefront" -> block.actionTargetId?.let(onStorefront) ?: onLibrary()
+                                else -> onLibrary()
+                            }
+                        }
+                        CardSurface(modifier, color = PagesColors.Peach) {
+                            Column {
+                                AppText(if (language == "bn") block.banglaTitle else block.englishTitle, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                                if (block.imageAssetId != null) AppText(if (language == "bn") "ছবি সংযুক্ত হলে এখানে দেখানো হবে" else "The hero image appears after asset delivery is connected.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = PagesSpacing.Dense))
+                                if (block.actionKind != null) AppText(if (language == "bn") "দেখুন" else "Explore", color = PagesColors.Forest, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = PagesSpacing.Medium))
+                            }
+                        }
+                    }
+                    is ManagedPageBlock.CategoryRail -> {
+                        SectionTitle(if (language == "bn") block.banglaTitle else block.englishTitle)
+                        val railCategories = block.categoryIds.mapNotNull { id -> categories.firstOrNull { it.id == id && it.enabled } }
+                        ChipRow(railCategories.map { it.label(language) }, selectedIndex = -1, onSelect = { index -> railCategories.getOrNull(index)?.let { onCategory(it.id) } })
+                    }
+                    is ManagedPageBlock.ProductCollection -> {
+                        SectionTitle(if (language == "bn") block.banglaTitle else block.englishTitle, "See all", onClick = onLibrary)
+                        val storeTypeIds = block.storefrontId?.let { id -> storefronts.firstOrNull { it.id == id }?.productTypeIds }.orEmpty()
+                        val collectionProducts = products.filter { product ->
+                            (block.productIds.isEmpty() || product.id in block.productIds) &&
+                                (block.productTypeIds.isEmpty() || product.productTypeId in block.productTypeIds) &&
+                                (storeTypeIds.isEmpty() || product.productTypeId in storeTypeIds) &&
+                                (block.categoryIds.isEmpty() || block.categoryIds.any { it in product.categoryIds })
+                        }
+                        if (collectionProducts.isEmpty()) EmptyState(Icons.Filled.Inventory2, "No matching products are published yet", "Published products will appear here when they match this collection.")
+                        else if (block.layout == CollectionLayout.CAROUSEL) {
+                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(PagesSpacing.Small)) {
+                                collectionProducts.forEach { product -> PublishedProductRow(product, productTypes, categories, promotions, now, language, Modifier.width(290.dp)) { onProduct(product) } }
+                            }
+                        } else collectionProducts.forEach { product -> PublishedProductRow(product, productTypes, categories, promotions, now, language) { onProduct(product) } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PublishedCatalogScreen(products: List<ManagedProduct>, productTypes: List<ManagedProductType>, categories: List<ManagedCategory>, storefronts: List<ManagedStorefront>, promotions: List<ManagedPromotion>, selectedCategoryId: String, selectedStorefrontId: String?, onCategory: (String) -> Unit, onProduct: (ManagedProduct) -> Unit, onSearch: () -> Unit, onOffline: () -> Unit) {
+    val language = LocalConfiguration.current.locales[0].language
+    var currentTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) { while (true) { delay(60_000); currentTime = System.currentTimeMillis() } }
+    val activeCategories = categories.filter { it.enabled }.sortedBy { it.sortOrder }
+    val options = listOf("all" to if (language == "bn") "সব" else "All") + activeCategories.map { it.id to it.label(language) }
+    var selectedCategory by remember(selectedCategoryId) { mutableStateOf(selectedCategoryId) }
+    val effectiveCategory = selectedCategory.takeIf { id -> options.any { it.first == id } } ?: "all"
+    val selectedStorefront = storefronts.firstOrNull { it.id == selectedStorefrontId && it.enabled }
+    val selectedTypeIds = selectedStorefront?.productTypeIds.orEmpty()
+    val visibleProducts = products.filter { product -> (effectiveCategory == "all" || effectiveCategory in product.categoryIds) && (selectedTypeIds.isEmpty() || product.productTypeId in selectedTypeIds) }
+    val title = selectedStorefront?.let { if (language == "bn") it.banglaTitle else it.englishTitle } ?: if (language == "bn") "বই ও পণ্যের সংগ্রহ" else "Stories and products"
+    MainPage(title = title, subtitle = if (language == "bn") "প্রকাশিত বই ও পণ্য দেখুন।" else "Browse published books and products.") {
+        SearchBarCard(onSearch)
+        Spacer(Modifier.height(PagesSpacing.CardContent))
+        ChipRow(options.map { it.second }, selectedIndex = options.indexOfFirst { it.first == effectiveCategory }, onSelect = { options[it].first.let { id -> selectedCategory = id; onCategory(id) } })
+        Spacer(Modifier.height(PagesSpacing.SectionGap))
+        SectionTitle(if (language == "bn") "প্রকাশিত পণ্য" else "Published products", "Offline", onClick = onOffline)
+        if (visibleProducts.isEmpty()) EmptyState(Icons.Filled.SearchOff, if (language == "bn") "এখানে কোনো পণ্য নেই" else "No products in this category", if (language == "bn") "অন্য বিভাগ বেছে দেখুন।" else "Choose another category to browse.")
+        visibleProducts.forEach { product ->
+            PublishedProductRow(product, productTypes, categories, promotions, currentTime, language) { onProduct(product) }
+        }
+    }
+}
+
+@Composable
+private fun PublishedProductRow(product: ManagedProduct, productTypes: List<ManagedProductType>, categories: List<ManagedCategory>, promotions: List<ManagedPromotion>, now: Long, language: String, modifier: Modifier = Modifier.fillMaxWidth(), onClick: () -> Unit) {
+    val title = if (language == "bn") product.title.bangla else product.title.english
+    val description = if (language == "bn") product.description.bangla else product.description.english
+    val type = productTypes.firstOrNull { it.id == product.productTypeId }
+    val typeLabel = type?.let { if (language == "bn") it.banglaLabel else it.englishLabel }.orEmpty()
+    val categoryLabels = product.categoryIds.mapNotNull { id -> categories.firstOrNull { it.id == id && it.enabled }?.label(language) }
+    val startingPrice = product.variants.filter { it.priceMinor > 0 }.map { variant -> bestAutomaticPrice(product, variant, promotions, now) }.minByOrNull { it.finalPriceMinor }
+    CardSurface(modifier.padding(vertical = PagesSpacing.Dense).clickable(role = Role.Button, onClick = onClick)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Surface(shape = RoundedCornerShape(PagesShapes.Card), color = PagesColors.Sage, modifier = Modifier.size(PagesSizes.BookListCover)) {
+                Box(contentAlignment = Alignment.Center) { Icon(if (type?.renderer?.name == "BOOK_V1") Icons.Filled.AutoStories else Icons.Filled.Inventory2, null, tint = PagesColors.Forest) }
+            }
+            Column(Modifier.weight(1f).padding(start = PagesSpacing.CardContent)) {
+                AppText(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                if (typeLabel.isNotBlank()) AppText(typeLabel, color = PagesColors.Forest, style = MaterialTheme.typography.labelSmall)
+                if (description.isNotBlank()) AppText(description, color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (categoryLabels.isNotEmpty()) AppText(categoryLabels.joinToString(" · "), color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall)
+            }
+            if (startingPrice != null) AppText(if (startingPrice.promotion == null) formatBdt(startingPrice.finalPriceMinor) else "${formatBdt(startingPrice.originalPriceMinor)} → ${formatBdt(startingPrice.finalPriceMinor)}", color = PagesColors.Forest, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = PagesSpacing.Compact))
+        }
+    }
+}
+
+@Composable
+private fun PublishedProductDetailsScreen(product: ManagedProduct, productTypes: List<ManagedProductType>, categories: List<ManagedCategory>, promotions: List<ManagedPromotion>, onBack: () -> Unit, onUnavailable: (String, String) -> Unit) {
+    val language = LocalConfiguration.current.locales[0].language
+    var currentTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) { while (true) { delay(60_000); currentTime = System.currentTimeMillis() } }
+    val type = productTypes.firstOrNull { it.id == product.productTypeId }
+    val isBook = type?.renderer?.name == "BOOK_V1"
+    val title = if (language == "bn") product.title.bangla else product.title.english
+    val description = if (language == "bn") product.description.bangla else product.description.english
+    val details = product.bookDetails
+    val categoryLabels = product.categoryIds.mapNotNull { id -> categories.firstOrNull { it.id == id && it.enabled }?.label(language) }
+    PageScaffold(onBack, if (language == "bn") "পণ্যের বিবরণ" else "Product details") {
+        Surface(shape = RoundedCornerShape(PagesShapes.Card), color = PagesColors.Sage, modifier = Modifier.fillMaxWidth().height(190.dp)) {
+            Box(contentAlignment = Alignment.Center) { Icon(if (isBook) Icons.Filled.AutoStories else Icons.Filled.Inventory2, null, tint = PagesColors.Forest, modifier = Modifier.size(56.dp)) }
+        }
+        Spacer(Modifier.height(PagesSpacing.Medium))
+        AppText(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        if (type != null) AppText(if (language == "bn") type.banglaLabel else type.englishLabel, color = PagesColors.Forest, style = MaterialTheme.typography.labelLarge)
+        if (description.isNotBlank()) { Spacer(Modifier.height(PagesSpacing.Compact)); AppText(description, color = PagesColors.Muted) }
+        if (categoryLabels.isNotEmpty()) { Spacer(Modifier.height(PagesSpacing.Medium)); ChipRow(categoryLabels) }
+        val book = details
+        if (isBook && book != null) {
+            Spacer(Modifier.height(PagesSpacing.Large))
+            SectionTitle(if (language == "bn") "বইয়ের তথ্য" else "About this book")
+            CardSurface(Modifier.fillMaxWidth()) {
+                Column {
+                    AppText("${if (language == "bn") "বয়স" else "Age range"}: ${book.ageBand}")
+                    AppText("${if (language == "bn") "পড়ার স্তর" else "Reading level"}: ${book.readingLevel}", modifier = Modifier.padding(top = PagesSpacing.Dense))
+                    AppText("${if (language == "bn") "পৃষ্ঠা" else "Pages"}: ${book.pageCount}", modifier = Modifier.padding(top = PagesSpacing.Dense))
+                    if (book.seriesId != null) AppText("${if (language == "bn") "সিরিজ" else "Series"}: ${book.seriesId}${book.seriesOrder?.let { " · $it" }.orEmpty()}", modifier = Modifier.padding(top = PagesSpacing.Dense))
+                    AppText("${if (language == "bn") "ভাষা" else "Languages"}: ${book.locales.joinToString()}", modifier = Modifier.padding(top = PagesSpacing.Dense))
+                    AppText("${if (language == "bn") "প্রবেশাধিকার" else "Access"}: ${book.access}", modifier = Modifier.padding(top = PagesSpacing.Dense))
+                }
+            }
+        }
+        if (product.attributes.isNotEmpty()) {
+            Spacer(Modifier.height(PagesSpacing.Large))
+            SectionTitle(if (language == "bn") "আরও তথ্য" else "More details")
+            CardSurface(Modifier.fillMaxWidth()) {
+                Column {
+                    product.attributes.forEach { (id, value) ->
+                        val definition = type?.attributes?.firstOrNull { it.id == id }
+                        val label = definition?.let { if (language == "bn") it.banglaLabel else it.englishLabel } ?: id
+                        AppText("$label: ${value.displayValue()}", modifier = Modifier.padding(vertical = PagesSpacing.Dense))
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(PagesSpacing.Large))
+        SectionTitle(if (language == "bn") "বিকল্প" else "Options")
+        product.variants.forEach { variant ->
+            CardSurface(Modifier.fillMaxWidth().padding(vertical = PagesSpacing.Dense)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        val physicalVariant = details?.physicalEditionVariantId == variant.id
+                        AppText((if (language == "bn") variant.label.bangla else variant.label.english) + if (physicalVariant) { if (language == "bn") " · মুদ্রিত বই" else " · Print edition" } else "", fontWeight = FontWeight.SemiBold)
+                        val availability = when (variant.availability) {
+                            ProductAvailability.IN_STOCK -> if (language == "bn") "স্টকে আছে" else "In stock"
+                            ProductAvailability.OUT_OF_STOCK -> if (language == "bn") "স্টকে নেই" else "Out of stock"
+                            ProductAvailability.PREORDER -> if (language == "bn") "আগাম অর্ডার" else "Preorder"
+                            ProductAvailability.NOT_APPLICABLE -> if (language == "bn") "ডিজিটাল" else "Digital"
+                        }
+                        AppText(availability, color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    val price = bestAutomaticPrice(product, variant, promotions, currentTime)
+                    val priceLabel = when {
+                        variant.priceMinor == 0L && details?.access == "free" -> if (language == "bn") "বিনামূল্যে" else "Free"
+                        variant.priceMinor == 0L && details?.access == "premium" -> "Premium"
+                        price.promotion != null -> "${formatBdt(price.originalPriceMinor)} → ${formatBdt(price.finalPriceMinor)}"
+                        else -> formatBdt(variant.priceMinor)
+                    }
+                    AppText(priceLabel, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        Spacer(Modifier.height(PagesSpacing.Medium))
+        if (isBook && details?.pdfInAppEnabled == true) {
+            OutlinedButton(onClick = { onUnavailable(if (language == "bn") "পড়া প্রস্তুত নয়" else "Reading isn’t ready", if (language == "bn") "এই বইয়ের ব্যক্তিগত পাঠ-ফাইল এখনো সংযুক্ত হয়নি।" else "The private reader file for this published book is not connected yet.") }, modifier = Modifier.fillMaxWidth(), enabled = false) {
+                AppText(if (language == "bn") "অ্যাপে পড়ুন · কনটেন্টের অপেক্ষায়" else "Read in app · content pending")
+            }
+        }
+        if (!isBook || details?.physicalEditionAvailable == true) {
+            Spacer(Modifier.height(PagesSpacing.ControlGap))
+            OutlineButton(if (language == "bn") "অর্ডার · চেকআউট প্রস্তুত নয়" else "Order · checkout not connected", Icons.Filled.ShoppingBag) {
+                onUnavailable(if (language == "bn") "চেকআউট প্রস্তুত নয়" else "Checkout isn’t connected", if (language == "bn") "অর্ডার নেওয়ার আগে নিরাপদ মূল্য ও পেমেন্ট পরিষেবা সংযুক্ত করতে হবে।" else "Secure price validation and payment services must be connected before orders can be placed.")
+            }
+        }
+    }
+}
+
+private fun ProductAttributeValue.displayValue(): String = when (this) {
+    is ProductAttributeValue.Text -> value
+    is ProductAttributeValue.NumberValue -> value.toString()
+    is ProductAttributeValue.BooleanValue -> if (value) "Yes" else "No"
+    is ProductAttributeValue.TextList -> values.joinToString()
+}
+
+private data class ProductDisplayPrice(
+    val originalPriceMinor: Long,
+    val finalPriceMinor: Long,
+    val promotion: ManagedPromotion?
+)
+
+private fun promotionTargetsProduct(promotion: ManagedPromotion, product: ManagedProduct): Boolean = when (promotion.targetKind) {
+    "all" -> true
+    "product" -> promotion.targetProductId == product.id
+    "categories" -> promotion.targetCategoryIds.any { it in product.categoryIds }
+    else -> false
+}
+
+private fun bestAutomaticPrice(product: ManagedProduct, variant: com.littlepages.app.data.ManagedProductVariant, promotions: List<ManagedPromotion>, now: Long): ProductDisplayPrice {
+    val price = variant.priceMinor
+    if (price <= 1) return ProductDisplayPrice(price, price, null)
+    val candidates = promotions.asSequence()
+        .filter { it.status in setOf("active", "scheduled") && it.stackingPolicy == "best_single_discount" && it.priceFloorMinor == 1L }
+        .filter { promotionTargetsProduct(it, product) }
+        .filter { promotion ->
+            val starts = runCatching { Instant.parse(promotion.startsAt).toEpochMilli() }.getOrNull()
+            val ends = runCatching { Instant.parse(promotion.endsAt).toEpochMilli() }.getOrNull()
+            starts != null && ends != null && starts <= now && now < ends
+        }
+        .mapNotNull { promotion ->
+            val requestedSavings = when (promotion.discountType) {
+                "percentage" -> runCatching {
+                    BigDecimal.valueOf(price).multiply(BigDecimal.valueOf(promotion.discountValue))
+                        .divide(BigDecimal.valueOf(100), 0, RoundingMode.DOWN).longValueExact()
+                }.getOrNull()
+                "fixed_amount" -> promotion.discountValue.takeIf { promotion.currency == "BDT" }
+                else -> null
+            } ?: return@mapNotNull null
+            val savings = requestedSavings.coerceIn(0, price - 1)
+            if (savings <= 0) null else ProductDisplayPrice(price, price - savings, promotion)
+        }
+        .sortedWith(compareByDescending<ProductDisplayPrice> { it.originalPriceMinor - it.finalPriceMinor }.thenBy { it.promotion?.id.orEmpty() })
+        .firstOrNull()
+    return candidates ?: ProductDisplayPrice(price, price, null)
+}
+
+private fun formatBdt(priceMinor: Long): String = "৳${priceMinor / 100}.${(priceMinor % 100).toString().padStart(2, '0')}"
 
 @Composable
 private fun LibraryScreen(categories: List<ManagedCategory>, onBook: (Book) -> Unit, onSearch: () -> Unit, onOffline: () -> Unit) {
@@ -845,19 +1177,32 @@ private fun LibraryScreen(categories: List<ManagedCategory>, onBook: (Book) -> U
 }
 
 @Composable
-private fun SearchScreen(query: String, categories: List<ManagedCategory>, onQuery: (String) -> Unit, onBook: (Book) -> Unit, onBack: () -> Unit) {
+private fun SearchScreen(query: String, categories: List<ManagedCategory>, products: List<ManagedProduct>, promotions: List<ManagedPromotion>, usePublishedCatalog: Boolean, productTypes: List<ManagedProductType>, onQuery: (String) -> Unit, onBook: (Book) -> Unit, onProduct: (ManagedProduct) -> Unit, onBack: () -> Unit) {
     val language = LocalConfiguration.current.locales[0].language
     val activeCategories = categories.filter { it.enabled }.sortedBy { it.sortOrder }
     val suggestions = activeCategories.map { it.label(language) }.take(5) + if (language == "bn") listOf("বাংলা গল্প") else listOf("Bangla stories")
-    val results = books.filter { book ->
+    val bookResults = books.filter { book ->
         val labels = book.categories.mapNotNull { id -> activeCategories.firstOrNull { it.id == id }?.label(language) }
         query.isBlank() || book.title.contains(query, true) || book.author.contains(query, true) || labels.any { it.contains(query, true) } || (query.contains("বাংলা", true) && book.hasBangla)
     }
+    val publishedResults = products.filter { product ->
+        val title = if (language == "bn") product.title.bangla else product.title.english
+        val description = if (language == "bn") product.description.bangla else product.description.english
+        val labels = product.categoryIds.mapNotNull { id -> activeCategories.firstOrNull { it.id == id }?.label(language) }
+        query.isBlank() || title.contains(query, true) || description.contains(query, true) || labels.any { it.contains(query, true) }
+    }
     PageScaffold(onBack, "Search books") {
         OutlinedTextField(query, onQuery, modifier = Modifier.fillMaxWidth(), placeholder = { AppText("Title, character, or topic") }, leadingIcon = { Icon(Icons.Filled.Search, null) }, trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { onQuery("") }) { Icon(Icons.Filled.Clear, contentDescription = localizedAppCopy("Clear search")) } }, shape = RoundedCornerShape(PagesShapes.Tag), singleLine = true)
-        Spacer(Modifier.height(PagesSpacing.Medium)); SectionTitle(if (query.isBlank()) "Suggested for you" else "Search results (${results.size})")
-        if (results.isEmpty()) EmptyState(Icons.Filled.SearchOff, "No books found", "Try a title, author, category, or another search.")
-        results.forEach { BookListRow(it) { onBook(it) } }
+        Spacer(Modifier.height(PagesSpacing.Medium))
+        if (usePublishedCatalog) {
+            SectionTitle(if (query.isBlank()) "Published products" else "Search results (${publishedResults.size})")
+            if (publishedResults.isEmpty()) EmptyState(Icons.Filled.SearchOff, "No published products found", "Try a title, description, or another category.")
+            publishedResults.forEach { product -> PublishedProductRow(product, productTypes, categories, promotions, System.currentTimeMillis(), language) { onProduct(product) } }
+        } else {
+            SectionTitle(if (query.isBlank()) "Suggested for you" else "Search results (${bookResults.size})")
+            if (bookResults.isEmpty()) EmptyState(Icons.Filled.SearchOff, "No books found", "Try a title, author, category, or another search.")
+            bookResults.forEach { BookListRow(it) { onBook(it) } }
+        }
         SectionTitle("Popular searches")
         ChipRow(suggestions, selectedIndex = -1, onSelect = { onQuery(suggestions[it]) })
     }

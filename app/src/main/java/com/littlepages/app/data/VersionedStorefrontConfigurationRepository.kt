@@ -19,7 +19,8 @@ data class PublishedContentManifest(
 data class VersionedStorefrontSnapshot(
     val manifest: PublishedContentManifest,
     val configuration: CatalogConfiguration,
-    val products: List<ManagedProduct> = emptyList()
+    val products: List<ManagedProduct> = emptyList(),
+    val promotions: List<ManagedPromotion> = emptyList()
 )
 
 /** Read-only boundary to the server-published configuration. Client apps never publish admin data. */
@@ -132,6 +133,31 @@ class VersionedStorefrontConfigurationRepository(
         val pageIds = config.storePages.filter { it.enabled }.map { it.id }.toSet()
         val categories = (config.productCategories.ifEmpty { config.bookCategories }).map { it.id }.toSet()
         val productIds = snapshot.products.map { it.id }.toSet()
+        val categoriesById = (config.productCategories.ifEmpty { config.bookCategories }).associateBy { it.id }
+        val productTypesById = config.productTypes.associateBy { it.id }
+        val storesById = config.storefronts.associateBy { it.id }
+        if (snapshot.promotions.map { it.id }.toSet().size != snapshot.promotions.size) return false
+        val promotionsValid = snapshot.promotions.all { promotion ->
+            val startsAt = runCatching { java.time.Instant.parse(promotion.startsAt) }.getOrNull()
+            val endsAt = runCatching { java.time.Instant.parse(promotion.endsAt) }.getOrNull()
+            val targetValid = when (promotion.targetKind) {
+                "all" -> promotion.targetProductId == null && promotion.targetCategoryIds.isEmpty()
+                "product" -> promotion.targetProductId?.let(productIds::contains) == true && promotion.targetCategoryIds.isEmpty()
+                "categories" -> promotion.targetProductId == null && promotion.targetCategoryIds.isNotEmpty() && promotion.targetCategoryIds.all(categoriesById::containsKey)
+                else -> false
+            }
+            val destinationValid = when (promotion.destinationKind) {
+                "product" -> promotion.destinationId in productIds
+                "category" -> promotion.destinationId in categoriesById
+                "storefront" -> promotion.destinationId in storesById
+                else -> false
+            }
+            promotion.id.isNotBlank() && promotion.status in setOf("scheduled", "active", "paused", "archived") &&
+                promotion.name.english.isNotBlank() && promotion.name.bangla.isNotBlank() && promotion.bannerText.english.isNotBlank() && promotion.bannerText.bangla.isNotBlank() &&
+                startsAt != null && endsAt != null && endsAt > startsAt && targetValid && destinationValid &&
+                (promotion.discountType == "percentage" && promotion.discountValue in 1L..99L || promotion.discountType == "fixed_amount" && promotion.discountValue > 0 && promotion.currency == "BDT") &&
+                promotion.stackingPolicy == "best_single_discount" && promotion.priceFloorMinor == 1L
+        }
         val storesValid = config.storefronts.filter { it.enabled }.all { store ->
             store.productTypeIds.all(typeIds::contains) &&
                 (store.landingPageId == null || store.landingPageId in pageIds) &&
@@ -159,14 +185,23 @@ class VersionedStorefrontConfigurationRepository(
             }
         }
         val productsValid = snapshot.products.filter { it.published }.all { product ->
+            val bookDetails = product.bookDetails
+            val bookDetailsValid = if (productTypesById[product.productTypeId]?.renderer != ProductRenderer.BOOK_V1) true else {
+                bookDetails != null && bookDetails.ageBand in setOf("0-2", "3-5", "6-8", "9-12") &&
+                    bookDetails.readingLevel.isNotBlank() && bookDetails.pageCount > 0 && bookDetails.contentVersion > 0 &&
+                    bookDetails.access in setOf("free", "premium", "paid") && bookDetails.pdfInAppEnabled &&
+                    bookDetails.locales.isNotEmpty() && bookDetails.locales.all { it in manifest.supportedLocales } &&
+                    (!bookDetails.physicalEditionAvailable || bookDetails.physicalEditionVariantId?.let { variantId -> product.variants.any { it.id == variantId } } == true)
+            }
             product.id.isNotBlank() && product.productTypeId in typeIds &&
                 product.categoryIds.all { it in categories } &&
+                bookDetailsValid &&
                 product.variants.isNotEmpty() && product.variants.all { variant ->
                     variant.id.isNotBlank() && variant.priceMinor >= 0 && variant.currency == "BDT" &&
                         (variant.stockQuantity == null || variant.stockQuantity >= 0)
                 }
         }
-        return storesValid && pagesValid && productsValid && productIds.size == snapshot.products.size
+        return storesValid && pagesValid && productsValid && promotionsValid && productIds.size == snapshot.products.size
     }
 
     private fun meetsMinimumVersion(currentVersion: String, minimumVersion: String): Boolean {

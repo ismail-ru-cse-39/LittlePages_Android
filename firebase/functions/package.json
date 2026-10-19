@@ -1,0 +1,16 @@
+{
+  "name": "littlepages-trusted-functions",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "22"
+  },
+  "main": "index.mjs",
+  "scripts": {
+    "check": "node --check index.mjs && node --check discount-domain.mjs && node --check publishing-domain.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.4.0",
+    "firebase-functions": "^6.4.0"
+  }
+}

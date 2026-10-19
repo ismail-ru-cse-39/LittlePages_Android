@@ -8,7 +8,8 @@
     "categoryIds": ["animals", "friendship", "nature"],
     "imageAssetIds": [],
     "variants": [{ "id": "in-app", "label": { "en": "Read in app", "bn": "অ্যাপে পড়ুন" }, "priceMinor": 0, "currency": "BDT", "stockState": "not_applicable" }],
-    "attributes": { "author": "Emma Clarke", "age_band": "3-7", "page_count": 24 }
+    "attributes": { "author": "Emma Clarke" },
+    "bookDetails": { "ageBand": "3-5", "readingLevel": "Early reader", "seriesId": null, "seriesOrder": null, "pageCount": 24, "locales": ["en", "bn"], "contentVersion": 1, "access": "free", "pdfInAppEnabled": true, "physicalEdition": { "available": false, "variantId": null } }
   },
   {
     "id": "day-at-the-lake",
@@ -19,7 +20,8 @@
     "categoryIds": ["animals", "nature"],
     "imageAssetIds": [],
     "variants": [{ "id": "in-app", "label": { "en": "Read in app", "bn": "অ্যাপে পড়ুন" }, "priceMinor": 0, "currency": "BDT", "stockState": "not_applicable" }],
-    "attributes": { "author": "Mina Rahman", "age_band": "4-8", "page_count": 20 }
+    "attributes": { "author": "Mina Rahman" },
+    "bookDetails": { "ageBand": "3-5", "readingLevel": "Early reader", "seriesId": null, "seriesOrder": null, "pageCount": 20, "locales": ["en", "bn"], "contentVersion": 1, "access": "free", "pdfInAppEnabled": true, "physicalEdition": { "available": false, "variantId": null } }
   },
   {
     "id": "kind-giant",
@@ -30,7 +32,8 @@
     "categoryIds": ["friendship", "nature"],
     "imageAssetIds": [],
     "variants": [{ "id": "in-app", "label": { "en": "Read in app", "bn": "অ্যাপে পড়ুন" }, "priceMinor": 0, "currency": "BDT", "stockState": "not_applicable" }],
-    "attributes": { "author": "Oliver Reed", "age_band": "5-9", "page_count": 28 }
+    "attributes": { "author": "Oliver Reed" },
+    "bookDetails": { "ageBand": "6-8", "readingLevel": "Early reader", "seriesId": null, "seriesOrder": null, "pageCount": 28, "locales": ["en", "bn"], "contentVersion": 1, "access": "free", "pdfInAppEnabled": true, "physicalEdition": { "available": false, "variantId": null } }
   },
   {
     "id": "woodland-blocks",
