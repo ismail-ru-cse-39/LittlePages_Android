@@ -1,3 +1,5 @@
+import { callAdmin, connectFirebaseAdmin, readCurrentPublication, saveFirebaseAdminSettings, signInAdmin, signOutAdmin, watchAdminAuth } from './firebase-admin.js';
+
 const STORAGE_KEY = 'littlepages-admin-preview-draft-v1';
 const STAFF_STORAGE_KEY = 'littlepages-admin-staff-role-preview-v1';
 const HISTORY_STORAGE_KEY = 'littlepages-admin-preview-history-v1';
@@ -53,6 +55,9 @@ let promotionAudit = [];
 let policyReview = { baseline: null, history: [], events: [], approval: 'pending', impactPreview: null };
 let selectedPageId = '';
 let eventsBound = false;
+let firebaseClient = null;
+let firebaseDraft;
+try { firebaseDraft = JSON.parse(localStorage.getItem('littlepages-admin-server-draft-v1') || 'null'); } catch { firebaseDraft = null; }
 const byId = id => document.getElementById(id);
 const clone = value => JSON.parse(JSON.stringify(value));
 const newId = prefix => `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
@@ -102,11 +107,50 @@ async function loadConfig() {
   savePolicyReview();
   bindEvents();
   render();
+  initializeFirebaseAdmin();
 }
 
 function bindEvents() {
   if (eventsBound) return;
   eventsBound = true;
+  byId('firebaseConfigForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      const configValue = JSON.parse(data.get('config'));
+      if (!configValue.apiKey || !configValue.projectId || !configValue.appId) throw new Error('The Web app config needs apiKey, projectId, and appId.');
+      saveFirebaseAdminSettings(configValue, data.get('siteKey').trim());
+      firebaseClient = await connectFirebaseAdmin();
+      enableFirebaseControls(false);
+      byId('firebaseSignInForm').hidden = false;
+      setFirebaseStatus('Firebase connected. Sign in with an authorized staff account.');
+      await refreshFirebasePublication();
+    } catch (error) { setFirebaseStatus(`Connection failed: ${error.message}`, true); }
+  });
+  byId('firebaseSignInForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!firebaseClient) return;
+    const data = new FormData(event.currentTarget);
+    try {
+      const credential = await signInAdmin(firebaseClient, data.get('email'), data.get('password'));
+      enableFirebaseControls(true);
+      byId('refreshModerationButton').disabled = false;
+      byId('refreshCodeCampaignsButton').disabled = false;
+      setFirebaseStatus(`Signed in as ${credential.user.email ?? credential.user.uid}. Role checks are enforced by Firebase Functions.`);
+      refreshFirebasePublication(); refreshLiveModeration(); refreshServerCodeCampaigns();
+    }
+    catch (error) { setFirebaseStatus(`Sign-in failed: ${error.message}`, true); }
+  });
+  byId('firebaseSignOutButton').addEventListener('click', async () => { if (firebaseClient) { await signOutAdmin(firebaseClient); enableFirebaseControls(false); byId('refreshModerationButton').disabled = true; byId('refreshCodeCampaignsButton').disabled = true; } });
+  byId('firebaseRefreshButton').addEventListener('click', refreshFirebasePublication);
+  byId('firebaseSaveDraftButton').addEventListener('click', saveFirebaseDraft);
+  byId('firebaseValidateButton').addEventListener('click', validateFirebaseDraft);
+  byId('firebaseApproveButton').addEventListener('click', approveFirebaseDraft);
+  byId('firebasePublishButton').addEventListener('click', publishFirebaseDraft);
+  byId('firebaseRollbackButton').addEventListener('click', rollbackFirebasePublication);
+  byId('firebaseSetRoleButton').addEventListener('click', setFirebaseStaffRole);
+  byId('refreshModerationButton').addEventListener('click', refreshLiveModeration);
+  byId('refreshCodeCampaignsButton').addEventListener('click', refreshServerCodeCampaigns);
   byId('addStoreButton').addEventListener('click', () => { byId('storeForm').hidden = false; byId('storeForm').querySelector('input').focus(); });
   byId('cancelStoreButton').addEventListener('click', () => { byId('storeForm').reset(); byId('storeForm').hidden = true; });
   byId('storeForm').addEventListener('submit', event => {
@@ -192,6 +236,157 @@ function bindEvents() {
   byId('previewPolicyImpactButton').addEventListener('click', previewPolicyImpact);
   byId('approvePolicyPreviewButton').addEventListener('click', approvePolicyPreview);
   byId('savePolicyRevisionButton').addEventListener('click', savePolicyRevision);
+}
+
+async function initializeFirebaseAdmin() {
+  try {
+    firebaseClient = await connectFirebaseAdmin();
+    if (!firebaseClient) return;
+    byId('firebaseSignInForm').hidden = false;
+    enableFirebaseControls(false);
+    watchAdminAuth(firebaseClient, user => {
+      const signedIn = Boolean(user);
+      enableFirebaseControls(signedIn);
+      byId('refreshModerationButton').disabled = !signedIn;
+      byId('refreshCodeCampaignsButton').disabled = !signedIn;
+      setFirebaseStatus(signedIn ? `Signed in as ${user.email ?? user.uid}. Role checks are enforced by Firebase Functions.` : 'Firebase connected. Sign in with an authorized staff account.');
+      if (signedIn) { refreshFirebasePublication(); refreshLiveModeration(); refreshServerCodeCampaigns(); }
+    });
+  } catch (error) { setFirebaseStatus(`Firebase setup unavailable: ${error.message}`, true); }
+}
+
+function enableFirebaseControls(enabled) {
+  ['firebaseRefreshButton', 'firebaseSaveDraftButton', 'firebaseValidateButton', 'firebaseApproveButton', 'firebasePublishButton', 'firebaseRollbackButton', 'firebaseSetRoleButton'].forEach(id => { byId(id).disabled = !enabled; });
+  const form = byId('firebaseSignInForm');
+  form.hidden = !firebaseClient;
+  form.elements.email.disabled = enabled;
+  form.elements.password.disabled = enabled;
+  form.querySelector('button[type="submit"]').hidden = enabled;
+  byId('firebaseSignOutButton').hidden = !enabled;
+}
+
+function setFirebaseStatus(message, isError = false) {
+  const status = byId('firebaseConnectionStatus');
+  status.textContent = message;
+  status.dataset.state = isError ? 'error' : 'ok';
+}
+
+async function refreshFirebasePublication() {
+  if (!firebaseClient) return;
+  try {
+    const manifest = await readCurrentPublication(firebaseClient);
+    byId('basePublicationRevisionInput').value = manifest.publicationRevision;
+    setFirebaseStatus(`Firebase connected · publication revision ${manifest.publicationRevision}${manifest.contentHash ? ` · ${manifest.contentHash.slice(0, 12)}…` : ' · no published snapshot yet'}.`);
+  } catch (error) { setFirebaseStatus(`Publication read failed: ${error.message}`, true); }
+}
+
+async function saveFirebaseDraft() {
+  if (!firebaseClient) return;
+  const errors = validateDraft();
+  if (errors.length) { renderValidation(); setFirebaseStatus('Fix local validation errors before saving.', true); return; }
+  try {
+    const manifest = await readCurrentPublication(firebaseClient);
+    const result = await callAdmin(firebaseClient, 'saveConfigurationDraft', {
+      ...(firebaseDraft ? { draftId: firebaseDraft.draftId, expectedDraftRevision: firebaseDraft.draftRevision } : {}),
+      basePublicationRevision: manifest.publicationRevision,
+      snapshot: { configuration: { ...clone(config), status: 'provisional' }, products: clone(products), promotions: clone(promotions) },
+      minimumClientVersions: {}
+    });
+    firebaseDraft = { draftId: result.draftId, draftRevision: result.draftRevision, basePublicationRevision: result.basePublicationRevision };
+    localStorage.setItem('littlepages-admin-server-draft-v1', JSON.stringify(firebaseDraft));
+    setFirebaseStatus(`Server draft ${result.draftId} saved at draft revision ${result.draftRevision}.`);
+    renderValidation();
+  } catch (error) { setFirebaseStatus(`Server draft save failed: ${error.message}`, true); }
+}
+
+async function validateFirebaseDraft() {
+  if (!firebaseClient || !firebaseDraft) return setFirebaseStatus('Save a server draft first.', true);
+  try {
+    const result = await callAdmin(firebaseClient, 'validateConfigurationDraft', { draftId: firebaseDraft.draftId });
+    setFirebaseStatus(result.valid ? `Server validation passed. Owner review blockers: ${result.approvalBlockers.length}.` : `Server validation found ${result.errors.length} issue(s): ${result.errors.join(' ')}`, !result.valid);
+  } catch (error) { setFirebaseStatus(`Server validation failed: ${error.message}`, true); }
+}
+
+async function approveFirebaseDraft() {
+  if (!firebaseClient || !firebaseDraft) return setFirebaseStatus('Save a server draft first.', true);
+  const reason = window.prompt('Approval reason. Confirm the required content, rights, policy, and legal reviews are complete:');
+  if (!reason?.trim()) return;
+  try {
+    const result = await callAdmin(firebaseClient, 'approveConfigurationDraft', { draftId: firebaseDraft.draftId, reason: reason.trim() });
+    const preview = await callAdmin(firebaseClient, 'getConfigurationDraftPreview', { draftId: firebaseDraft.draftId });
+    firebaseDraft.draftRevision = preview.draftRevision;
+    localStorage.setItem('littlepages-admin-server-draft-v1', JSON.stringify(firebaseDraft));
+    setFirebaseStatus(`Draft approved · ${result.contentHash.slice(0, 12)}… Publish is a separate action.`);
+  } catch (error) { setFirebaseStatus(`Approval failed: ${error.message}`, true); }
+}
+
+async function publishFirebaseDraft() {
+  if (!firebaseClient || !firebaseDraft) return setFirebaseStatus('Save and approve a server draft first.', true);
+  const reason = window.prompt('Publication reason:');
+  if (!reason?.trim()) return;
+  try {
+    const preview = await callAdmin(firebaseClient, 'getConfigurationDraftPreview', { draftId: firebaseDraft.draftId });
+    const result = await callAdmin(firebaseClient, 'publishConfigurationDraft', { draftId: firebaseDraft.draftId, expectedDraftRevision: preview.draftRevision, reason: reason.trim() });
+    firebaseDraft = null;
+    localStorage.removeItem('littlepages-admin-server-draft-v1');
+    setFirebaseStatus(`Published revision ${result.publicationRevision}.`);
+    await refreshFirebasePublication();
+  } catch (error) { setFirebaseStatus(`Publish failed: ${error.message}`, true); }
+}
+
+async function rollbackFirebasePublication() {
+  const targetPublicationRevision = Number(byId('rollbackTargetRevision').value);
+  if (!Number.isSafeInteger(targetPublicationRevision) || targetPublicationRevision < 1) return setFirebaseStatus('Enter a valid earlier publication revision.', true);
+  if (!window.confirm(`Create a new publication that restores revision ${targetPublicationRevision}?`)) return;
+  const reason = window.prompt('Rollback reason:');
+  if (!reason?.trim()) return;
+  try {
+    const result = await callAdmin(firebaseClient, 'rollbackConfigurationPublication', { targetPublicationRevision, reason: reason.trim() });
+    setFirebaseStatus(`Rolled back by publishing revision ${result.publicationRevision} from snapshot ${targetPublicationRevision}.`);
+    await refreshFirebasePublication();
+  } catch (error) { setFirebaseStatus(`Rollback failed: ${error.message}`, true); }
+}
+
+async function setFirebaseStaffRole() {
+  const targetUid = byId('staffTargetUid').value.trim();
+  if (!targetUid) return setFirebaseStatus('Enter an existing Firebase Auth user UID.', true);
+  const reason = window.prompt('Reason for this staff role change:');
+  if (!reason?.trim()) return;
+  try {
+    const result = await callAdmin(firebaseClient, 'setStaffRole', { targetUid, role: byId('staffTargetRole').value, status: byId('staffTargetStatus').value, reason: reason.trim() });
+    setFirebaseStatus(`Updated ${result.targetUid}: ${result.role} · ${result.status}.`);
+  } catch (error) { setFirebaseStatus(`Role update failed: ${error.message}`, true); }
+}
+
+async function refreshLiveModeration() {
+  const root = byId('liveModerationQueue');
+  root.replaceChildren();
+  if (!firebaseClient) return;
+  byId('liveModerationStatus').textContent = 'Loading reports…';
+  try {
+    const result = await callAdmin(firebaseClient, 'listModerationReports', { limit: 100 });
+    if (!result.reports.length) { byId('liveModerationStatus').textContent = 'No open reports.'; return; }
+    byId('liveModerationStatus').textContent = `${result.reports.length} open report(s).`;
+    result.reports.forEach(report => {
+      const card = document.createElement('article'); card.className = 'moderation-card';
+      card.append(text('span', `${report.targetType ?? 'content'} · ${report.reason ?? 'No reason supplied'} · ${report.targetId ?? 'unknown target'}`, 'eyebrow'));
+      if (report.targetPreview?.body) card.append(text('p', report.targetPreview.body));
+      if (report.targetPreview?.moderationState) card.append(text('small', `Current state: ${report.targetPreview.moderationState}`));
+      if (report.createdAt) card.append(text('small', `Reported ${new Date(report.createdAt?.seconds ? report.createdAt.seconds * 1000 : report.createdAt).toLocaleString()}`));
+      const actions = document.createElement('div'); actions.className = 'moderation-actions';
+      [['keep', 'Keep visible'], ['hide', 'Hide'], ['remove', 'Remove']].forEach(([action, label]) => {
+        const button = text('button', label, action === 'remove' ? 'button button-soft' : 'button button-primary'); button.type = 'button';
+        button.addEventListener('click', async () => {
+          const reason = window.prompt(`Reason for ${action} decision:`);
+          if (!reason?.trim()) return;
+          button.disabled = true;
+          try { await callAdmin(firebaseClient, 'moderateCommunityItem', { reportId: report.id, action, reason: reason.trim() }); await refreshLiveModeration(); }
+          catch (error) { button.disabled = false; byId('liveModerationStatus').textContent = `Moderation failed: ${error.message}`; }
+        }); actions.append(button);
+      });
+      card.append(actions); root.append(card);
+    });
+  } catch (error) { byId('liveModerationStatus').textContent = `Could not load reports: ${error.message}`; }
 }
 
 function render() {
@@ -699,6 +894,20 @@ async function saveDiscountCode(event) {
     const totalRedemptionLimit = limitValue ? Number(limitValue) : null;
     const perCustomerLimit = Number(form.elements.perCustomerLimit.value);
     if ((totalRedemptionLimit !== null && (!Number.isSafeInteger(totalRedemptionLimit) || totalRedemptionLimit < 1)) || !Number.isSafeInteger(perCustomerLimit) || perCustomerLimit < 1) throw new Error('Redemption limits must be positive whole numbers.');
+    if (firebaseClient?.auth.currentUser) {
+      const campaignId = `campaign-${newId('server').slice(-12)}`;
+      const result = await callAdmin(firebaseClient, 'createDiscountCodes', {
+        campaignId, mode, count, targeting, discount, schedule, eligibility, assignedCustomerIds,
+        totalRedemptionLimit, perCustomerLimit
+      });
+      const serverRecords = result.codes.map(code => ({ id: code.id, campaignId: result.campaignId, codeHash: code.id, mode, status: 'draft', targeting, discount, schedule, eligibility, totalRedemptionLimit: mode === 'unique' ? 1 : totalRedemptionLimit, perCustomerLimit: mode === 'unique' ? 1 : perCustomerLimit, serverManaged: true }));
+      discountCodes.unshift(...serverRecords);
+      offerOneTimeCodeDownload(result.codes.map(item => item.code), result.campaignId);
+      byId('codeCampaignStatus').textContent = 'Created by the trusted service. Download plaintext codes once; only keyed HMAC digests are stored by the server.';
+      form.reset(); form.elements.mode.value = mode; form.elements.count.value = '10'; form.elements.perCustomerLimit.value = '1';
+      updateDiscountCodeMode(); byId('assignedCustomersField').hidden = true; updateTargetFields(form, 'code-target-field'); populateCodeTargets(); renderPromotions();
+      return;
+    }
     const rawCodes = mode === 'shared' ? [String(form.elements.code.value || '').trim().toUpperCase()] : Array.from({ length: count }, () => generateUniqueCode());
     if (mode === 'shared' && !/^[A-Z0-9-]{4,24}$/.test(rawCodes[0])) throw new Error('Use 4–24 letters, numbers, or hyphens for a shared code.');
     const campaignId = newId('campaign');
@@ -794,11 +1003,49 @@ function renderPromotionRow(item, isCode, codeCount = 1) {
   row.append(text('span', promotionStateLabel(item), `status${item.status === 'active' ? '' : ' off'}`));
   const controls = document.createElement('div'); controls.className = 'entity-actions';
   const records = isCode ? discountCodes.filter(record => record.campaignId === item.campaignId) : [item];
-  [['Schedule', 'scheduled'], ['Activate', 'active'], ['Pause', 'paused'], ['Archive', 'archived']].forEach(([label, status]) => {
-    const button = text('button', label); button.type = 'button'; button.disabled = records.every(record => record.status === status);
-    button.addEventListener('click', () => { records.forEach(record => { record.status = status; }); recordPromotionEvent(item.campaignId ?? item.id, `${label.toLowerCase()} ${isCode ? 'discount code campaign' : 'automatic discount'}`); renderPromotions(); }); controls.append(button);
-  });
+  if (isCode && item.serverManaged && firebaseClient?.auth.currentUser) {
+    if (!item.approvedAt && item.status === 'draft') controls.append(serverCampaignAction(item, 'Approve', 'approveDiscountCampaign'));
+    if (['draft', 'paused'].includes(item.status) && (item.approvedAt || item.status === 'paused')) controls.append(serverCampaignAction(item, 'Publish', 'publishDiscountCampaign'));
+    if (['active', 'scheduled'].includes(item.status)) controls.append(serverCampaignAction(item, 'Pause', 'setDiscountCampaignStatus', { status: 'paused' }));
+    if (item.status !== 'archived') controls.append(serverCampaignAction(item, 'Archive', 'setDiscountCampaignStatus', { status: 'archived' }));
+  } else {
+    [['Schedule', 'scheduled'], ['Activate', 'active'], ['Pause', 'paused'], ['Archive', 'archived']].forEach(([label, status]) => {
+      const button = text('button', label); button.type = 'button'; button.disabled = records.every(record => record.status === status);
+      button.addEventListener('click', () => { records.forEach(record => { record.status = status; }); recordPromotionEvent(item.campaignId ?? item.id, `${label.toLowerCase()} ${isCode ? 'discount code campaign' : 'automatic discount'}`); renderPromotions(); }); controls.append(button);
+    });
+  }
   row.append(controls); return row;
+}
+
+function serverCampaignAction(item, label, callableName, extra = {}) {
+  const button = text('button', label, 'button button-soft'); button.type = 'button';
+  button.addEventListener('click', async () => {
+    const reason = window.prompt(`${label} campaign ${item.campaignId}. Reason:`);
+    if (!reason?.trim()) return;
+    button.disabled = true;
+    try {
+      await callAdmin(firebaseClient, callableName, { campaignId: item.campaignId, reason: reason.trim(), ...extra });
+      await refreshServerCodeCampaigns();
+    } catch (error) { button.disabled = false; byId('codeCampaignStatus').textContent = `${label} failed: ${error.message}`; }
+  });
+  return button;
+}
+
+async function refreshServerCodeCampaigns() {
+  if (!firebaseClient?.auth.currentUser) return;
+  byId('codeCampaignStatus').textContent = 'Loading private campaign status…';
+  try {
+    const result = await callAdmin(firebaseClient, 'listDiscountCampaigns', { limit: 100 });
+    const currentIds = new Set(result.campaigns.map(campaign => campaign.id));
+    discountCodes = discountCodes.filter(record => !record.serverManaged || !currentIds.has(record.campaignId));
+    result.campaigns.forEach(campaign => {
+      for (let index = 0; index < Math.min(campaign.codeCount ?? 1, 100); index += 1) {
+        discountCodes.push({ id: `${campaign.id}-${index}`, campaignId: campaign.id, mode: campaign.mode, status: campaign.status, targeting: campaign.targeting, discount: campaign.discount, schedule: campaign.schedule, eligibility: campaign.eligibility, totalRedemptionLimit: campaign.totalRedemptionLimit, perCustomerLimit: campaign.perCustomerLimit, approvedAt: campaign.approvedAt ?? null, serverManaged: true });
+      }
+    });
+    byId('codeCampaignStatus').textContent = `${result.campaigns.length} private server campaign(s) loaded. Plaintext codes and assigned customer IDs are never fetched.`;
+    renderPromotions();
+  } catch (error) { byId('codeCampaignStatus').textContent = `Could not load campaigns: ${error.message}`; }
 }
 
 function renderStaffRoles() {

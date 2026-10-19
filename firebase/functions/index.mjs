@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { getAuth } from 'firebase-admin/auth';
 import { initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 import { defineSecret } from 'firebase-functions/params';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
@@ -25,13 +26,15 @@ import {
 initializeApp();
 
 const firestore = getFirestore();
+const storage = getStorage();
 const discountHmacKey = defineSecret('LITTLEPAGES_DISCOUNT_HMAC_KEY');
 const FUNCTION_REGION = 'asia-south1';
 const MAX_CODE_BATCH = 100;
 const ROLE_CAPABILITIES = Object.freeze({
   catalog_editor: new Set(['edit_configuration', 'validate_configuration', 'create_codes']),
   publisher: new Set(['edit_configuration', 'validate_configuration', 'publish_configuration', 'rollback_configuration', 'create_codes', 'publish_codes']),
-  administrator: new Set(['edit_configuration', 'validate_configuration', 'approve_configuration', 'publish_configuration', 'rollback_configuration', 'create_codes', 'approve_codes', 'publish_codes', 'manage_staff'])
+  moderator: new Set(['moderate_community']),
+  administrator: new Set(['edit_configuration', 'validate_configuration', 'approve_configuration', 'publish_configuration', 'rollback_configuration', 'create_codes', 'approve_codes', 'publish_codes', 'manage_staff', 'moderate_community'])
 });
 
 function requireSignedIn(request) {
@@ -182,6 +185,189 @@ function auditRecord({ actorUid, action, targetId, requestId, details = {} }) {
   };
 }
 
+function timestampMillis(value) {
+  if (value == null) return null;
+  if (typeof value?.toMillis === 'function') return value.toMillis();
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+export const refreshOfflineBookGrant = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const bookId = requiredString(request.data?.bookId, 'bookId', 80);
+    const childId = requiredString(request.data?.childId, 'childId', 80);
+    const locale = request.data?.locale;
+    if (!/^[a-z0-9_-]{2,80}$/.test(bookId) || !/^[A-Za-z0-9_-]{1,80}$/.test(childId) || !['en', 'bn'].includes(locale)) {
+      throw new HttpsError('invalid-argument', 'Choose a valid book, child profile, and supported locale.');
+    }
+    const manifestRef = firestore.collection('publicConfiguration').doc('current');
+    const userRef = firestore.collection('users').doc(uid);
+    const childRef = userRef.collection('children').doc(childId);
+    const grantsRef = userRef.collection('offlineAccess');
+    const grantRef = grantsRef.doc(bookId);
+    const accountLockRef = firestore.collection('offlineAccessControl').doc(uid);
+    const now = Date.now();
+    const grant = await firestore.runTransaction(async transaction => {
+      const accountLockSnapshot = await transaction.get(accountLockRef);
+      const manifestSnapshot = await transaction.get(manifestRef);
+      if (!manifestSnapshot.exists) throw new HttpsError('failed-precondition', 'No published catalogue is available.');
+      const catalogRevision = manifestSnapshot.get('catalogRevision');
+      if (!Number.isSafeInteger(catalogRevision) || catalogRevision < 1) throw new HttpsError('failed-precondition', 'The published catalogue revision is invalid.');
+      const productRef = firestore.collection('catalogRevisions').doc(String(catalogRevision)).collection('products').doc(bookId);
+      const [userSnapshot, childSnapshot, productSnapshot, currentGrantSnapshot] = await Promise.all([
+        transaction.get(userRef), transaction.get(childRef), transaction.get(productRef), transaction.get(grantRef)
+      ]);
+      if (!userSnapshot.exists || userSnapshot.get('state') !== 'active') throw new HttpsError('failed-precondition', 'An active parent account is required.');
+      if (!childSnapshot.exists) throw new HttpsError('permission-denied', 'The child profile does not belong to this account.');
+      if (!productSnapshot.exists || productSnapshot.get('status') !== 'published' || productSnapshot.get('typeId') !== 'book') {
+        throw new HttpsError('not-found', 'The book is not in the published catalogue.');
+      }
+      const book = productSnapshot.data();
+      const details = book.bookDetails ?? {};
+      const contentVersion = details.contentVersion ?? book.contentVersion;
+      if (!Number.isSafeInteger(contentVersion) || contentVersion < 1 || !Array.isArray(details.locales) || !details.locales.includes(locale) || details.pdfInAppEnabled === false) {
+        throw new HttpsError('failed-precondition', 'This book has no approved in-app content for the selected locale.');
+      }
+      const readerAssetId = `${bookId}-${locale}-v${contentVersion}-reader`;
+      const readerAssetRef = firestore.collection('books').doc(bookId).collection('assets').doc(readerAssetId);
+      const readerAssetSnapshot = await transaction.get(readerAssetRef);
+      const readerAsset = readerAssetSnapshot.data();
+      const expectedObjectPath = `books/${bookId}/v${contentVersion}/${locale}/reader.pdf`;
+      if (!readerAssetSnapshot.exists || readerAsset.type !== 'reader' || readerAsset.reviewStatus !== 'approved' ||
+          readerAsset.locale !== locale || readerAsset.contentVersion !== contentVersion || readerAsset.objectPath !== expectedObjectPath ||
+          !Number.isSafeInteger(readerAsset.byteLength) || readerAsset.byteLength < 1 || readerAsset.byteLength > 100 * 1024 * 1024 ||
+          typeof readerAsset.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(readerAsset.sha256)) {
+        throw new HttpsError('failed-precondition', 'The approved private reader file is unavailable for this book and locale.');
+      }
+      let source = 'free';
+      let entitlementExpiry = null;
+      if (details.access !== 'free' && details.free !== true) {
+        const entitlements = await transaction.get(userRef.collection('entitlements').where('productId', '==', bookId).limit(20));
+        const entitlement = entitlements.docs.map(snapshot => snapshot.data()).find(item => {
+          const validFrom = timestampMillis(item.validFrom);
+          const validUntil = timestampMillis(item.validUntil);
+          return item.state === 'active' && (validFrom == null || validFrom <= now) && (validUntil == null || validUntil > now);
+        });
+        if (!entitlement) throw new HttpsError('permission-denied', 'An active entitlement is required for offline access.');
+        source = entitlement.source ?? 'book_purchase';
+        if (!['book_purchase', 'subscription', 'admin_grant'].includes(source)) throw new HttpsError('failed-precondition', 'The book entitlement source is invalid.');
+        entitlementExpiry = timestampMillis(entitlement.validUntil);
+      }
+      const trackedBookIds = [...new Set((accountLockSnapshot.data()?.activeBookIds ?? []).filter(id => typeof id === 'string' && /^[a-z0-9_-]{2,80}$/.test(id)))].slice(0, 20);
+      const trackedSnapshots = trackedBookIds.length
+        ? await transaction.getAll(...trackedBookIds.map(id => grantsRef.doc(id)))
+        : [];
+      const activeBookIds = trackedSnapshots.filter(snapshot => snapshot.exists && snapshot.get('state') === 'active' && (timestampMillis(snapshot.get('expiresAt')) ?? 0) > now).map(snapshot => snapshot.id);
+      const alreadyActive = currentGrantSnapshot.exists && currentGrantSnapshot.get('state') === 'active' && (timestampMillis(currentGrantSnapshot.get('expiresAt')) ?? 0) > now;
+      if (!alreadyActive && !activeBookIds.includes(bookId) && activeBookIds.length >= 10) throw new HttpsError('resource-exhausted', 'The family offline book limit has been reached.');
+      const expiresAt = Math.min(now + 30 * 24 * 60 * 60 * 1000, entitlementExpiry ?? Number.MAX_SAFE_INTEGER);
+      if (expiresAt <= now) throw new HttpsError('permission-denied', 'The book entitlement has expired.');
+      const nextGrant = {
+        uid, childId, bookId, locale, contentVersion, state: 'active', source,
+        issuedAt: FieldValue.serverTimestamp(), refreshAfter: new Date(now + 7 * 24 * 60 * 60 * 1000),
+        expiresAt: new Date(expiresAt), entitlementExpiresAt: entitlementExpiry == null ? null : new Date(entitlementExpiry)
+      };
+      transaction.set(grantRef, nextGrant);
+      transaction.set(accountLockRef, { activeBookIds: [...new Set([...activeBookIds, bookId])], updatedAt: FieldValue.serverTimestamp() });
+      transaction.create(firestore.collection('offlineAccessEvents').doc(), {
+        uid, childId, bookId, locale, contentVersion, action: 'refresh_grant', source,
+        createdAt: FieldValue.serverTimestamp(), expiresAt: nextGrant.expiresAt
+      });
+      return { bookId, childId, locale, contentVersion, source, issuedAt: new Date(now).toISOString(), refreshAfter: nextGrant.refreshAfter.toISOString(), expiresAt: nextGrant.expiresAt.toISOString(), entitlementExpiresAt: nextGrant.entitlementExpiresAt?.toISOString() ?? null };
+    });
+    return { grant };
+  }
+);
+
+export const revokeOfflineBookGrant = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const bookId = requiredString(request.data?.bookId, 'bookId', 80);
+    if (!/^[a-z0-9_-]{2,80}$/.test(bookId)) throw new HttpsError('invalid-argument', 'Choose a valid book.');
+    const grantRef = firestore.collection('users').doc(uid).collection('offlineAccess').doc(bookId);
+    const eventRef = firestore.collection('offlineAccessEvents').doc();
+    await firestore.runTransaction(async transaction => {
+      const grantSnapshot = await transaction.get(grantRef);
+      if (!grantSnapshot.exists || grantSnapshot.get('state') !== 'active') return;
+      transaction.update(grantRef, { state: 'revoked', revokedAt: FieldValue.serverTimestamp() });
+      transaction.create(eventRef, { uid, bookId, childId: grantSnapshot.get('childId'), action: 'revoke_grant', createdAt: FieldValue.serverTimestamp() });
+    });
+    return { bookId, state: 'revoked' };
+  }
+);
+
+export const createOfflineBookDownloadUrl = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const bookId = requiredString(request.data?.bookId, 'bookId', 80);
+    const childId = requiredString(request.data?.childId, 'childId', 80);
+    const locale = request.data?.locale;
+    if (!/^[a-z0-9_-]{2,80}$/.test(bookId) || !/^[A-Za-z0-9_-]{1,80}$/.test(childId) || !['en', 'bn'].includes(locale)) {
+      throw new HttpsError('invalid-argument', 'Choose a valid book, child profile, and supported locale.');
+    }
+    const userRef = firestore.collection('users').doc(uid);
+    const grantRef = userRef.collection('offlineAccess').doc(bookId);
+    const childRef = userRef.collection('children').doc(childId);
+    const userSnapshotPromise = userRef.get();
+    const grantSnapshotPromise = grantRef.get();
+    const childSnapshotPromise = childRef.get();
+    const [userSnapshot, grantSnapshot, childSnapshot] = await Promise.all([userSnapshotPromise, grantSnapshotPromise, childSnapshotPromise]);
+    const grant = grantSnapshot.data();
+    const now = Date.now();
+    if (!userSnapshot.exists || userSnapshot.get('state') !== 'active' || !childSnapshot.exists || !grantSnapshot.exists || grant.state !== 'active' || grant.childId !== childId || grant.locale !== locale ||
+        timestampMillis(grant.expiresAt) == null || timestampMillis(grant.expiresAt) <= now || timestampMillis(grant.expiresAt) - now > 30 * 24 * 60 * 60 * 1000) {
+      throw new HttpsError('permission-denied', 'A current offline grant for this child, book, and locale is required.');
+    }
+    const contentVersion = grant.contentVersion;
+    const manifest = await firestore.collection('publicConfiguration').doc('current').get();
+    const catalogRevision = manifest.get('catalogRevision');
+    if (!Number.isSafeInteger(catalogRevision) || catalogRevision < 1) throw new HttpsError('failed-precondition', 'The published catalogue is unavailable.');
+    const productSnapshot = await firestore.collection('catalogRevisions').doc(String(catalogRevision)).collection('products').doc(bookId).get();
+    const product = productSnapshot.data() ?? {};
+    const details = product.bookDetails ?? {};
+    const currentContentVersion = details.contentVersion ?? product.contentVersion;
+    if (!productSnapshot.exists || product.status !== 'published' || product.typeId !== 'book' || currentContentVersion !== contentVersion ||
+        !details.locales?.includes(locale) || details.pdfInAppEnabled === false) {
+      throw new HttpsError('failed-precondition', 'The offline grant does not match the current published book version. Refresh access before downloading.');
+    }
+    if (details.access !== 'free' && details.free !== true) {
+      const entitlements = await userRef.collection('entitlements').where('productId', '==', bookId).limit(20).get();
+      const activeEntitlement = entitlements.docs.map(snapshot => snapshot.data()).some(item => {
+        const validFrom = timestampMillis(item.validFrom);
+        const validUntil = timestampMillis(item.validUntil);
+        return item.state === 'active' && (validFrom == null || validFrom <= now) && (validUntil == null || validUntil > now);
+      });
+      if (!activeEntitlement) throw new HttpsError('permission-denied', 'A current entitlement is required to download this book.');
+    }
+    const assetId = `${bookId}-${locale}-v${contentVersion}-reader`;
+    const assetSnapshot = await firestore.collection('books').doc(bookId).collection('assets').doc(assetId).get();
+    const asset = assetSnapshot.data();
+    const objectPath = `books/${bookId}/v${contentVersion}/${locale}/reader.pdf`;
+    if (!Number.isSafeInteger(contentVersion) || contentVersion < 1 || !assetSnapshot.exists || asset.type !== 'reader' || asset.reviewStatus !== 'approved' ||
+        asset.locale !== locale || asset.contentVersion !== contentVersion || asset.objectPath !== objectPath || !Number.isSafeInteger(asset.byteLength) ||
+        asset.byteLength < 1 || asset.byteLength > 100 * 1024 * 1024 || typeof asset.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(asset.sha256)) {
+      throw new HttpsError('failed-precondition', 'The approved reader asset is unavailable.');
+    }
+    const file = storage.bucket().file(objectPath);
+    let metadata;
+    try { [metadata] = await file.getMetadata(); }
+    catch { throw new HttpsError('not-found', 'The private reader file has not been uploaded.'); }
+    if (Number(metadata.size) !== asset.byteLength || metadata.contentType !== 'application/pdf' || metadata.metadata?.sha256 !== asset.sha256) {
+      throw new HttpsError('failed-precondition', 'The uploaded reader file does not match its approved asset record.');
+    }
+    const expiresAt = now + 15 * 60 * 1000;
+    const [url] = await file.getSignedUrl({ action: 'read', expires: expiresAt, version: 'v4' });
+    return { url, expiresAt: new Date(expiresAt).toISOString(), bookId, childId, locale, contentVersion, sha256: asset.sha256, byteLength: asset.byteLength };
+  }
+);
+
 export const setStaffRole = onCall(
   { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 5 },
   async request => {
@@ -190,7 +376,7 @@ export const setStaffRole = onCall(
     const role = request.data?.role;
     const status = request.data?.status;
     const reason = requiredString(request.data?.reason, 'reason', 500);
-    if (targetUid.includes('/') || !['catalog_editor', 'publisher', 'administrator'].includes(role) || !['active', 'disabled'].includes(status)) {
+    if (targetUid.includes('/') || !['catalog_editor', 'publisher', 'moderator', 'administrator'].includes(role) || !['active', 'disabled'].includes(status)) {
       throw new HttpsError('invalid-argument', 'Choose a valid staff account, role, and active/disabled status.');
     }
     const actorRef = firestore.collection('adminRoles').doc(actorUid);
@@ -226,6 +412,98 @@ export const setStaffRole = onCall(
       return { targetUid, role, status };
     });
     return result;
+  }
+);
+
+const MODERATABLE_COLLECTIONS = Object.freeze({ post: 'posts', comment: 'comments', review: 'reviews' });
+
+export const createCommunityReport = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const targetType = request.data?.targetType;
+    const targetId = requiredString(request.data?.targetId, 'targetId', 128);
+    const reason = requiredString(request.data?.reason, 'reason', 1000);
+    if (!Object.hasOwn(MODERATABLE_COLLECTIONS, targetType) || targetId.includes('/') || !/^[A-Za-z0-9_-]{1,128}$/.test(targetId)) {
+      throw new HttpsError('invalid-argument', 'Choose a supported community item.');
+    }
+    const reporterHash = createHash('sha256').update(uid).digest('hex').slice(0, 20);
+    const reportId = `${targetType}-${targetId}-${reporterHash}`;
+    const reportRef = firestore.collection('reports').doc(reportId);
+    const targetRef = firestore.collection(MODERATABLE_COLLECTIONS[targetType]).doc(targetId);
+    await firestore.runTransaction(async transaction => {
+      const [targetSnapshot, reportSnapshot] = await Promise.all([transaction.get(targetRef), transaction.get(reportRef)]);
+      if (!targetSnapshot.exists || targetSnapshot.get('moderationState') !== 'visible') throw new HttpsError('not-found', 'The community item is not available to report.');
+      if (targetSnapshot.get('uid') === uid) throw new HttpsError('failed-precondition', 'You cannot report your own content.');
+      if (reportSnapshot.exists) throw new HttpsError('already-exists', 'You have already reported this item.');
+      transaction.create(reportRef, {
+        reporterUid: uid, targetType, targetId, reason, status: 'open',
+        assignedModerator: null, createdAt: FieldValue.serverTimestamp(), resolvedAt: null
+      });
+    });
+    return { reportId, status: 'open' };
+  }
+);
+
+export const listModerationReports = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 5 },
+  async request => {
+    const uid = requireSignedIn(request);
+    assertRoleCapability(await firestore.collection('adminRoles').doc(uid).get(), 'moderate_community');
+    const limit = Math.min(Math.max(Number.isSafeInteger(request.data?.limit) ? request.data.limit : 50, 1), 100);
+    const reports = await firestore.collection('reports').where('status', '==', 'open').limit(limit).get();
+    const records = await Promise.all(reports.docs.map(async snapshot => {
+      const report = snapshot.data();
+      const collectionName = Object.hasOwn(MODERATABLE_COLLECTIONS, report.targetType) ? MODERATABLE_COLLECTIONS[report.targetType] : null;
+      const target = collectionName && typeof report.targetId === 'string' && !report.targetId.includes('/')
+        ? await firestore.collection(collectionName).doc(report.targetId).get()
+        : null;
+      const content = target?.data();
+      return {
+        ...report,
+        id: snapshot.id,
+        targetPreview: target?.exists ? {
+          body: typeof content.body === 'string' ? content.body.slice(0, 3000) : typeof content.text === 'string' ? content.text.slice(0, 3000) : '',
+          moderationState: content.moderationState ?? null,
+          createdAt: content.createdAt ?? null
+        } : null
+      };
+    }));
+    return { reports: records };
+  }
+);
+
+export const moderateCommunityItem = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 5 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const reportId = requiredString(request.data?.reportId, 'reportId', 128);
+    const action = request.data?.action;
+    const reason = requiredString(request.data?.reason, 'reason', 1000);
+    if (!['keep', 'hide', 'remove'].includes(action) || reportId.includes('/')) {
+      throw new HttpsError('invalid-argument', 'Choose a valid report and moderation action.');
+    }
+    const reportRef = firestore.collection('reports').doc(reportId);
+    const roleRef = firestore.collection('adminRoles').doc(uid);
+    const auditRef = firestore.collection('adminAuditEvents').doc();
+    await firestore.runTransaction(async transaction => {
+      const [roleSnapshot, reportSnapshot] = await Promise.all([transaction.get(roleRef), transaction.get(reportRef)]);
+      assertRoleCapability(roleSnapshot, 'moderate_community');
+      if (!reportSnapshot.exists || reportSnapshot.get('status') !== 'open') throw new HttpsError('failed-precondition', 'This report is missing or has already been resolved.');
+      const report = reportSnapshot.data();
+      const collectionName = Object.hasOwn(MODERATABLE_COLLECTIONS, report.targetType) ? MODERATABLE_COLLECTIONS[report.targetType] : null;
+      if (!collectionName || typeof report.targetId !== 'string' || !report.targetId || report.targetId.includes('/')) {
+        throw new HttpsError('failed-precondition', 'The report target is invalid or unsupported.');
+      }
+      const itemRef = firestore.collection(collectionName).doc(report.targetId);
+      const itemSnapshot = await transaction.get(itemRef);
+      if (!itemSnapshot.exists) throw new HttpsError('not-found', 'The reported content no longer exists.');
+      const moderationState = action === 'keep' ? 'visible' : action === 'hide' ? 'hidden' : 'removed';
+      transaction.update(itemRef, { moderationState, moderatedBy: uid, moderatedAt: FieldValue.serverTimestamp() });
+      transaction.update(reportRef, { status: 'resolved', action, reason, assignedModerator: uid, resolvedAt: FieldValue.serverTimestamp() });
+      transaction.create(auditRef, auditRecord({ actorUid: uid, action: 'moderate_community_item', targetId: `${report.targetType}:${report.targetId}`, details: { reportId, reportAction: action, moderationState, reason } }));
+    });
+    return { reportId, action, status: 'resolved' };
   }
 );
 
@@ -616,11 +894,25 @@ export const createDiscountCodes = onCall(
   }
 );
 
+export const listDiscountCampaigns = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 5 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const roleSnapshot = await firestore.collection('adminRoles').doc(uid).get();
+    const role = assertRoleCapability(roleSnapshot, 'create_codes');
+    if (role === 'catalog_editor') throw new HttpsError('permission-denied', 'Only publishers and administrators can inspect campaign status.');
+    const limit = Math.min(Math.max(Number.isSafeInteger(request.data?.limit) ? request.data.limit : 50, 1), 100);
+    const campaigns = await firestore.collection('discountCodeCampaigns').limit(limit).get();
+    return { campaigns: campaigns.docs.map(snapshot => ({ ...snapshot.data(), id: snapshot.id })) };
+  }
+);
+
 export const publishDiscountCampaign = onCall(
   { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 5 },
   async request => {
     const uid = requireSignedIn(request);
     const campaignId = requiredString(request.data?.campaignId, 'campaignId', 80);
+    const reason = requiredString(request.data?.reason, 'reason', 500);
     const campaignRef = firestore.collection('discountCodeCampaigns').doc(campaignId);
     const codesQuery = firestore.collection('discountCodes').where('campaignId', '==', campaignId).limit(MAX_CODE_BATCH + 1);
     const auditRef = firestore.collection('adminAuditEvents').doc();
@@ -642,7 +934,7 @@ export const publishDiscountCampaign = onCall(
       const status = startsAt > now ? 'scheduled' : 'active';
       transaction.update(campaignRef, { status, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid });
       codesSnapshot.docs.forEach(snapshot => transaction.update(snapshot.ref, { status }));
-      transaction.create(auditRef, auditRecord({ actorUid: uid, action: 'publish_discount_campaign', targetId: campaignId, requestId: request.rawRequest?.headers?.['x-cloud-trace-context'], details: { status, codeCount: codesSnapshot.size } }));
+      transaction.create(auditRef, auditRecord({ actorUid: uid, action: 'publish_discount_campaign', targetId: campaignId, requestId: request.rawRequest?.headers?.['x-cloud-trace-context'], details: { status, codeCount: codesSnapshot.size, reason } }));
     });
     return { campaignId, status: Date.parse((await campaignRef.get()).data().schedule.startsAt) > now ? 'scheduled' : 'active' };
   }
@@ -653,6 +945,7 @@ export const approveDiscountCampaign = onCall(
   async request => {
     const uid = requireSignedIn(request);
     const campaignId = requiredString(request.data?.campaignId, 'campaignId', 80);
+    const reason = requiredString(request.data?.reason, 'reason', 500);
     const campaignRef = firestore.collection('discountCodeCampaigns').doc(campaignId);
     const roleRef = firestore.collection('adminRoles').doc(uid);
     const auditRef = firestore.collection('adminAuditEvents').doc();
@@ -662,7 +955,7 @@ export const approveDiscountCampaign = onCall(
       if (!campaignSnapshot.exists) throw new HttpsError('not-found', 'The discount campaign does not exist.');
       if (campaignSnapshot.get('status') !== 'draft' || campaignSnapshot.get('approvedAt')) throw new HttpsError('failed-precondition', 'Only an unapproved draft can be approved.');
       transaction.update(campaignRef, { approvedAt: FieldValue.serverTimestamp(), approvedBy: uid });
-      transaction.create(auditRef, auditRecord({ actorUid: uid, action: 'approve_discount_campaign', targetId: campaignId }));
+      transaction.create(auditRef, auditRecord({ actorUid: uid, action: 'approve_discount_campaign', targetId: campaignId, details: { reason } }));
     });
     return { campaignId, status: 'approved' };
   }
@@ -674,6 +967,7 @@ export const setDiscountCampaignStatus = onCall(
     const uid = requireSignedIn(request);
     const campaignId = requiredString(request.data?.campaignId, 'campaignId', 80);
     const status = request.data?.status;
+    const reason = requiredString(request.data?.reason, 'reason', 500);
     if (!['paused', 'archived'].includes(status)) throw new HttpsError('invalid-argument', 'Campaign status must be paused or archived.');
     const campaignRef = firestore.collection('discountCodeCampaigns').doc(campaignId);
     const codesQuery = firestore.collection('discountCodes').where('campaignId', '==', campaignId).limit(MAX_CODE_BATCH + 1);
@@ -687,7 +981,7 @@ export const setDiscountCampaignStatus = onCall(
       if (campaignSnapshot.get('status') === 'archived') throw new HttpsError('failed-precondition', 'An archived campaign cannot be changed.');
       transaction.update(campaignRef, { status, updatedAt: FieldValue.serverTimestamp(), updatedBy: uid });
       codesSnapshot.docs.forEach(snapshot => transaction.update(snapshot.ref, { status }));
-      transaction.create(auditRef, auditRecord({ actorUid: uid, action: `set_discount_campaign_${status}`, targetId: campaignId, details: { codeCount: codesSnapshot.size } }));
+      transaction.create(auditRef, auditRecord({ actorUid: uid, action: `set_discount_campaign_${status}`, targetId: campaignId, details: { codeCount: codesSnapshot.size, reason } }));
     });
     return { campaignId, status };
   }

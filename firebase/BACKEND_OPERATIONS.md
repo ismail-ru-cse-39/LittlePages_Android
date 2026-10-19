@@ -16,9 +16,11 @@ This document describes the Firebase Functions/API boundary. Initial source exis
 | `approveDiscountCampaign` / `publishDiscountCampaign` | Administrator / publisher | Approval and publication are separate audited role-gated transactions; only approved drafts publish; schedule status is enforced at redemption | Approved, active or scheduled private campaign |
 | `redeemDiscountCode` | Signed-in parent | App Check/Auth; normalize code; keyed HMAC lookup; verify active time window, account eligibility, products/categories, and remaining limits; compare its savings with eligible automatic campaigns, apply only the best single discount with a positive-price floor, and reserve a chosen code atomically with order creation | Order total and immutable applied discount record; reject duplicate/concurrent redemptions |
 | `resolveBookAccess` | Signed-in parent | Parent owns child profile; book is published; entitlement or free rule is valid; locale/content version is supported | Short-lived reader access grant |
+| `refreshOfflineBookGrant` / `revokeOfflineBookGrant` | Signed-in parent | App Check/Auth; account owns child profile; published book/locale/content version and approved private reader asset are valid; free or current entitlement; 30-day maximum, 7-day refresh, 10-book account cap | Private server-owned offline grant and issuance/revocation event |
+| `createOfflineBookDownloadUrl` | Signed-in parent | App Check/Auth; matching active grant and child; approved asset record matches the private PDF object's size, MIME type, and SHA-256 metadata | 15-minute signed private download URL plus expected checksum |
 | `createPhysicalOrder` | Signed-in parent | Validate product/variant, current price, stock, region, delivery quote, and idempotency key | Pending order with immutable price/address snapshot |
 | `verifyPaymentEvent` | Provider webhook | Verify provider signature and event uniqueness; reconcile with pending order/subscription | Idempotent transaction result and server-owned entitlement/order update |
-| `createCommunityReport` | Signed-in parent | Validate parent actor, allowed target/reason, rate limits, and report visibility | Private report reference |
+| `createCommunityReport` | Signed-in parent | App Check/Auth; supported visible target; no self-report; one report per reporter/target | Private report reference |
 | `moderateCommunityItem` | Staff moderator | Moderator role; valid moderation state transition; capture actor, reason, target, and timestamp | Moderated item state plus audit entry |
 
 ## Cross-cutting requirements
