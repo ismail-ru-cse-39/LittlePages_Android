@@ -28,14 +28,27 @@ internal class FirebaseOfflineBookAccessRemote(
                 source = grant.requiredString("source"),
                 refreshAfter = Instant.parse(grant.requiredString("refreshAfter")),
                 expiresAt = Instant.parse(grant.requiredString("expiresAt")),
-                entitlementExpiresAt = grant["entitlementExpiresAt"] as? String
-                    ?.let(Instant::parse)
+                entitlementExpiresAt = (grant["entitlementExpiresAt"] as? String)?.let { Instant.parse(it) }
             )
         }
     }
 
     suspend fun createDownloadUrl(bookId: String, childId: String, locale: String): OfflineBookDownload {
         val result = functions.getHttpsCallable("createOfflineBookDownloadUrl")
+            .call(mapOf("bookId" to bookId, "childId" to childId, "locale" to locale))
+            .awaitCallable()
+        val data = result.data.asStringMap()
+        return OfflineBookDownload(
+            url = URI(data.requiredString("url")),
+            expiresAt = Instant.parse(data.requiredString("expiresAt")),
+            contentVersion = data.requiredLong("contentVersion").toInt(),
+            sha256 = data.requiredString("sha256"),
+            byteLength = data.requiredLong("byteLength")
+        )
+    }
+
+    suspend fun resolveBookAccess(bookId: String, childId: String, locale: String): OfflineBookDownload {
+        val result = functions.getHttpsCallable("resolveBookAccess")
             .call(mapOf("bookId" to bookId, "childId" to childId, "locale" to locale))
             .awaitCallable()
         val data = result.data.asStringMap()

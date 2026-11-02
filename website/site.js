@@ -4,6 +4,7 @@ let configuration;
 let products = [];
 let promotions = [];
 let activeManifest;
+let publicationSource = 'demo';
 let publicationRefreshPending = false;
 let language = localStorage.getItem(LANGUAGE_KEY) === 'bn' ? 'bn' : 'en';
 let currentStoreId = null;
@@ -26,6 +27,7 @@ async function start() {
         validateManifest(cached.manifest);
         await validateSnapshot(cached.manifest, cached.snapshot);
         activatePublication(cached.manifest, cached.snapshot);
+        publicationSource = cached.source ?? 'demo';
         currentStoreId = configuration.catalog.storefronts.find(store => store.enabled)?.id ?? null;
         bindEvents();
         render();
@@ -42,20 +44,78 @@ async function refreshPublication() {
   if (publicationRefreshPending) return;
   publicationRefreshPending = true;
   try {
-  const manifestResponse = await fetch('../firebase/config/demo-manifest.v1.json', { cache: 'no-store' });
-  if (!manifestResponse.ok) throw new Error('Could not load the publication manifest.');
-  const manifest = await manifestResponse.json();
-  validateManifest(manifest);
-  if (activeManifest && manifest.publicationRevision < activeManifest.publicationRevision) throw new Error('The publication revision moved backwards.');
-  const snapshotResponse = await fetch('../firebase/config/demo-publication.v1.json', { cache: 'no-store' });
-  if (!snapshotResponse.ok) throw new Error('Could not load the published snapshot.');
-  const snapshot = await snapshotResponse.json();
-  await validateSnapshot(manifest, snapshot);
-  activatePublication(manifest, snapshot);
-  try { localStorage.setItem(CONTENT_CACHE_KEY, JSON.stringify({ manifest, snapshot })); } catch { /* The active snapshot remains usable if browser storage is full or disabled. */ }
+    const liveConfig = window.LITTLEPAGES_FIREBASE_CONFIG;
+    const publication = liveConfig?.projectId && liveConfig?.apiKey
+      ? await readLivePublication(liveConfig)
+      : await readDemoPublication();
+    validateManifest(publication.manifest);
+    if (activeManifest && publication.manifest.publicationRevision < activeManifest.publicationRevision) throw new Error('The publication revision moved backwards.');
+    await validateSnapshot(publication.manifest, publication.snapshot);
+    activatePublication(publication.manifest, publication.snapshot);
+    publicationSource = publication.source;
+    try { localStorage.setItem(CONTENT_CACHE_KEY, JSON.stringify({ manifest: publication.manifest, snapshot: publication.snapshot, source: publication.source })); } catch { /* The active snapshot remains usable if browser storage is full or disabled. */ }
   } finally {
     publicationRefreshPending = false;
   }
+}
+
+async function readDemoPublication() {
+  const [manifestResponse, snapshotResponse] = await Promise.all([
+    fetch('../firebase/config/demo-manifest.v1.json', { cache: 'no-store' }),
+    fetch('../firebase/config/demo-publication.v1.json', { cache: 'no-store' })
+  ]);
+  if (!manifestResponse.ok || !snapshotResponse.ok) throw new Error('Could not load the demo publication.');
+  return { manifest: await manifestResponse.json(), snapshot: await snapshotResponse.json(), source: 'demo' };
+}
+
+async function readLivePublication(firebaseConfig) {
+  const projectId = firebaseConfig.projectId;
+  if (!/^[a-z0-9-]{4,40}$/.test(projectId)) throw new Error('Firebase project ID is invalid.');
+  const root = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents`;
+  const key = `?key=${encodeURIComponent(firebaseConfig.apiKey)}`;
+  const readDocument = async path => {
+    const response = await fetch(`${root}/${path}${key}`, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Could not read published document (${response.status}).`);
+    const document = await response.json();
+    return decodeFirestoreFields(document.fields ?? {});
+  };
+  const listDocuments = async path => {
+    const response = await fetch(`${root}/${path}?pageSize=300${key}`, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Could not read published collection (${response.status}).`);
+    const result = await response.json();
+    return (result.documents ?? []).map(document => ({ ...decodeFirestoreFields(document.fields ?? {}), id: document.name.split('/').at(-1) }));
+  };
+  const manifest = await readDocument('publicConfiguration/current');
+  validateManifest(manifest);
+  const [configuration, products, promotions] = await Promise.all([
+    readDocument(`configurationRevisions/${manifest.configurationRevision}`),
+    listDocuments(`catalogRevisions/${manifest.catalogRevision}/products`),
+    listDocuments(`catalogRevisions/${manifest.catalogRevision}/promotions`)
+  ]);
+  if (!configuration.configuration || !Array.isArray(products) || !Array.isArray(promotions)) throw new Error('The published revision is incomplete.');
+  products.sort((left, right) => left.id.localeCompare(right.id));
+  promotions.sort((left, right) => left.id.localeCompare(right.id));
+  return {
+    manifest,
+    snapshot: { schemaVersion: 1, configuration: configuration.configuration, products, promotions },
+    source: 'live'
+  };
+}
+
+function decodeFirestoreFields(fields) {
+  return Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, decodeFirestoreValue(value)]));
+}
+
+function decodeFirestoreValue(value) {
+  if (Object.hasOwn(value, 'nullValue')) return null;
+  if (Object.hasOwn(value, 'stringValue')) return value.stringValue;
+  if (Object.hasOwn(value, 'booleanValue')) return value.booleanValue;
+  if (Object.hasOwn(value, 'integerValue')) return Number(value.integerValue);
+  if (Object.hasOwn(value, 'doubleValue')) return Number(value.doubleValue);
+  if (Object.hasOwn(value, 'timestampValue')) return value.timestampValue;
+  if (Object.hasOwn(value, 'arrayValue')) return (value.arrayValue.values ?? []).map(decodeFirestoreValue);
+  if (Object.hasOwn(value, 'mapValue')) return decodeFirestoreFields(value.mapValue.fields ?? {});
+  throw new Error('The published revision contains an unsupported Firestore value.');
 }
 
 function bindPublicationRefresh() {
@@ -231,7 +291,9 @@ function render() {
   if (!configuration) return;
   document.documentElement.lang = language;
   byId('languageButton').textContent = language === 'en' ? 'বাংলা' : 'English';
-  byId('previewNotice').textContent = copy('Storefront preview · sample listings · checkout is not connected', 'স্টোরফ্রন্টের নমুনা · নমুনা পণ্য · কেনাকাটা এখনো চালু নয়');
+  byId('previewNotice').textContent = publicationSource === 'live'
+    ? copy('Published storefront · checkout is not connected', 'প্রকাশিত স্টোরফ্রন্ট · কেনাকাটা এখনো চালু নয়')
+    : copy('Storefront preview · sample listings · checkout is not connected', 'স্টোরফ্রন্টের নমুনা · নমুনা পণ্য · কেনাকাটা এখনো চালু নয়');
   document.querySelector('.header-actions .button-soft').textContent = copy('For parents', 'অভিভাবকদের জন্য');
   document.querySelector('.header-actions .button-primary').textContent = copy('Explore books', 'বই দেখুন');
   document.querySelector('.parent-note .eyebrow').textContent = copy('MADE FOR GROWING TOGETHER', 'একসঙ্গে বেড়ে ওঠার জন্য');

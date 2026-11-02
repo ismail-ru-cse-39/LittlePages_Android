@@ -60,8 +60,13 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.littlepages.app.data.ReaderProgressStore
+import com.littlepages.app.data.OfflineBookDownloadManager
+import com.littlepages.app.data.FirebaseOfflineBookAccessRemote
+import com.littlepages.app.data.FirestoreOfflineBookProfileRemote
+import com.littlepages.app.data.OfflineBookChildProfile
 import com.littlepages.app.data.AndroidNarrationEngine
 import com.littlepages.app.data.NarrationAudioFocus
 import com.littlepages.app.data.NarrationState
@@ -76,6 +81,9 @@ import com.littlepages.app.data.ManagedStorefront
 import com.littlepages.app.data.CollectionLayout
 import com.littlepages.app.data.ProductAttributeValue
 import com.littlepages.app.data.ProductAvailability
+import com.littlepages.app.data.LocalizedCopy
+import com.littlepages.app.data.ManagedBookDetails
+import com.littlepages.app.data.ManagedProductVariant
 import com.littlepages.app.data.PublishedStorefrontContentSource
 import com.littlepages.app.data.PreviewCatalogConfigurationSource
 import com.littlepages.app.data.FirestorePublishedStorefrontConfigurationRemote
@@ -86,6 +94,7 @@ import com.littlepages.app.BuildConfig
 import com.littlepages.app.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseException
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthException
@@ -117,12 +126,46 @@ private enum class Page {
     Checkout, OrderConfirmation, Recovery, Orders, Support
 }
 
-internal data class Book(val title: String, val author: String, val age: String, val emoji: String, val tint: Color, val rating: String = "4.9", val categories: Set<String> = emptySet(), val minimumAge: Int = 0, val maximumAge: Int = 12, val hasBangla: Boolean = true, val isAvailable: Boolean = true, val pdfAvailable: Boolean = true, val physicalAvailable: Boolean = true, val premiumOnly: Boolean = false)
+internal data class Book(val product: ManagedProduct, val emoji: String, val tint: Color, val rating: String = "4.9") {
+    val id get() = product.id
+    val title get() = product.title.english
+    val author get() = (product.attributes["author"] as? ProductAttributeValue.Text)?.value.orEmpty()
+    val details get() = requireNotNull(product.bookDetails)
+    val age get() = "Ages ${details.ageBand.replace('-', '–')}"
+    val pageCount get() = details.pageCount
+    val categories get() = product.categoryIds.toSet()
+    val minimumAge get() = details.ageBand.substringBefore('-').toIntOrNull() ?: 0
+    val maximumAge get() = details.ageBand.substringAfter('-', "12").toIntOrNull() ?: 12
+    val hasBangla get() = "bn" in details.locales
+    val pdfAvailable get() = details.pdfInAppEnabled && product.variants.any { it.id == "in-app" && it.availability != ProductAvailability.OUT_OF_STOCK }
+    val physicalAvailable get() = details.physicalEditionAvailable && product.variants.any { it.id == details.physicalEditionVariantId && it.availability != ProductAvailability.OUT_OF_STOCK }
+    val isAvailable get() = product.published && (pdfAvailable || physicalAvailable)
+    val premiumOnly get() = details.access == "premium"
+    fun variant(id: String) = product.variants.firstOrNull { it.id == id }
+}
+
+private fun sampleBook(id: String, title: String, author: String, ageBand: String, readingLevel: String, pageCount: Int, access: String, categories: List<String>, emoji: String, tint: Color, pdf: Boolean = true, physical: Boolean = false, available: Boolean = true) = Book(
+    product = ManagedProduct(
+        id = id, productTypeId = "book", title = LocalizedCopy(title, title),
+        description = LocalizedCopy("A story about kindness, courage, and friendship.", "দয়া, সাহস ও বন্ধুত্বের একটি গল্প।"),
+        categoryIds = categories, imageAssetIds = emptyList(),
+        variants = buildList {
+            if (pdf) add(ManagedProductVariant("in-app", LocalizedCopy("Read in app", "অ্যাপে পড়ুন"), 0, availability = if (available) ProductAvailability.IN_STOCK else ProductAvailability.OUT_OF_STOCK))
+            if (physical) add(ManagedProductVariant("physical", LocalizedCopy("Printed book", "মুদ্রিত বই"), 45000, availability = ProductAvailability.IN_STOCK))
+        }, attributes = mapOf("author" to ProductAttributeValue.Text(author)),
+        bookDetails = ManagedBookDetails(ageBand, readingLevel, pageCount = pageCount, locales = listOf("en", "bn"), contentVersion = 1, access = access, pdfInAppEnabled = pdf, physicalEditionAvailable = physical, physicalEditionVariantId = if (physical) "physical" else null)
+    ), emoji = emoji, tint = tint
+)
+
+private fun priceLabel(variant: ManagedProductVariant?): String = variant?.let {
+    if (it.priceMinor == 0L) "Free" else "৳${BigDecimal.valueOf(it.priceMinor, 2).stripTrailingZeros().toPlainString()}"
+} ?: "Unavailable"
+
 private val books = listOf(
-    Book("The Brave Little Fox", "Emma Clarke", "Ages 3–7", "🦊", PagesColors.Sky, categories = setOf("animals", "friendship", "nature"), minimumAge = 3, maximumAge = 7),
-    Book("A Day at the Lake", "Mina Rahman", "Ages 4–8", "🐻", PagesColors.Sage, categories = setOf("animals", "nature"), minimumAge = 4, maximumAge = 8, physicalAvailable = false),
-    Book("The Kind Giant", "Oliver Reed", "Ages 5–9", "🌿", PagesColors.Peach, categories = setOf("friendship", "nature"), minimumAge = 5, maximumAge = 9, pdfAvailable = false, premiumOnly = true),
-    Book("The Star Keeper", "Nadia Noor", "Ages 4–8", "🌙", Color(0xFFE8E4F3), categories = setOf("nature", "bedtime"), minimumAge = 4, maximumAge = 8, isAvailable = false, pdfAvailable = false, physicalAvailable = false)
+    sampleBook("brave-little-fox", "The Brave Little Fox", "Emma Clarke", "3-5", "Early reader", 24, "free", listOf("animals", "friendship", "nature"), "🦊", PagesColors.Sky, physical = true),
+    sampleBook("day-at-the-lake", "A Day at the Lake", "Mina Rahman", "3-5", "Early reader", 20, "free", listOf("animals", "nature"), "🐻", PagesColors.Sage, physical = false),
+    sampleBook("kind-giant", "The Kind Giant", "Oliver Reed", "6-8", "Early reader", 28, "premium", listOf("friendship", "nature"), "🌿", PagesColors.Peach, pdf = false, physical = true),
+    sampleBook("star-keeper", "The Star Keeper", "Nadia Noor", "3-5", "Early reader", 24, "free", listOf("nature", "bedtime"), "🌙", Color(0xFFE8E4F3), available = false)
 )
 private data class CommunityEntry(val body: String, val imageUri: android.net.Uri? = null, val category: String = "stories", val author: String = "You", val time: String = "Just now") {
     val hasPhoto: Boolean get() = imageUri != null
@@ -262,6 +305,7 @@ fun LittlePagesApp() {
     val publishedSnapshot = publishedContentSource?.publishedContent?.collectAsState()?.value
     val publishedPromotions = publishedSnapshot?.promotions.orEmpty()
     val publishedProducts = publishedSnapshot?.products?.filter { it.published }.orEmpty()
+    val offlineBookProducts = publishedProducts.filter { product -> product.bookDetails?.pdfInAppEnabled == true && managedConfiguration.productTypes.firstOrNull { it.id == product.productTypeId }?.renderer?.name == "BOOK_V1" }
     val publishedProductTypeIds = managedConfiguration.productTypes.filter { it.enabled && publishedProducts.any { product -> product.productTypeId == it.id } }.map { it.id }.toSet()
     val publishedStorefrontIds = managedConfiguration.storefronts.filter { storefront -> storefront.enabled && storefront.productTypeIds.any(publishedProductTypeIds::contains) }.map { it.id }.toSet()
     val landingPageId = managedConfiguration.storefronts.filter { it.enabled && it.navigationVisible }.minByOrNull { it.sortOrder }?.landingPageId
@@ -304,15 +348,52 @@ fun LittlePagesApp() {
     var autoplay by remember { mutableStateOf(true) }
     var readerMode by remember { mutableStateOf("Page turn") }
     val progressStore = remember(appContext) { ReaderProgressStore(appContext) }
+    val offlineDownloadManager = remember(appContext, BuildConfig.FIREBASE_CONFIGURED) {
+        if (BuildConfig.FIREBASE_CONFIGURED) runCatching {
+            OfflineBookDownloadManager(appContext, FirebaseOfflineBookAccessRemote(FirebaseApp.getInstance()))
+        }.getOrNull() else null
+    }
+    val offlineProfileRemote = remember(appContext, BuildConfig.FIREBASE_CONFIGURED) {
+        if (BuildConfig.FIREBASE_CONFIGURED) runCatching {
+            FirestoreOfflineBookProfileRemote(FirebaseFirestore.getInstance())
+        }.getOrNull() else null
+    }
+    var ownedOfflineChildren by remember(firebaseUser?.uid) { mutableStateOf<List<OfflineBookChildProfile>>(emptyList()) }
+    var offlineProfileLoadError by remember(firebaseUser?.uid) { mutableStateOf<String?>(null) }
+    var offlineProfilesLoading by remember(firebaseUser?.uid) { mutableStateOf(false) }
+    var offlineProfileRefreshKey by remember(firebaseUser?.uid) { mutableIntStateOf(0) }
+    var offlineSavedByProductId by remember(firebaseUser?.uid) { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
+    var offlineOperations by remember(firebaseUser?.uid) { mutableStateOf<Set<String>>(emptySet()) }
+    var childSelectionProduct by remember(firebaseUser?.uid) { mutableStateOf<ManagedProduct?>(null) }
+    LaunchedEffect(firebaseUser?.uid, isAuthenticatedUser, offlineProfileRefreshKey) {
+        val accountId = firebaseUser?.uid?.takeIf { isAuthenticatedUser }
+        ownedOfflineChildren = emptyList()
+        offlineProfileLoadError = null
+        if (accountId != null && offlineProfileRemote != null) {
+            offlineProfilesLoading = true
+            runCatching { offlineProfileRemote.fetchOwnedChildren(accountId) }
+                .onSuccess { ownedOfflineChildren = it }
+                .onFailure { offlineProfileLoadError = it.message ?: "Family profiles could not be loaded." }
+            offlineProfilesLoading = false
+        }
+    }
+    LaunchedEffect(firebaseUser?.uid, isAuthenticatedUser, offlineBookProducts, offlineDownloadManager) {
+        val accountId = firebaseUser?.uid?.takeIf { isAuthenticatedUser }
+        val manager = offlineDownloadManager
+        if (accountId != null && manager != null) {
+            offlineSavedByProductId = offlineBookProducts.associate { product ->
+                product.id to runCatching { manager.hasOfflineCopy(accountId, product.id) }.getOrDefault(false)
+            }
+        } else offlineSavedByProductId = emptyMap()
+    }
     val childProfiles = remember { mutableStateListOf(ChildProfile("Emma", "5 years old")) }
     var selectedChildId by rememberSaveable { mutableStateOf(childProfiles.first().id) }
     val activeChildId = childProfiles.firstOrNull { it.id == selectedChildId }?.id ?: childProfiles.first().id
-    var currentPage by remember(selectedBook.title, activeChildId) { mutableIntStateOf(progressStore.page(activeChildId, selectedBook.title).coerceIn(1, 24)) }
-    var bookmarked by remember(selectedBook.title, activeChildId, currentPage) { mutableStateOf(progressStore.isBookmarked(activeChildId, selectedBook.title, currentPage)) }
+    var currentPage by remember(selectedBook.id, activeChildId) { mutableIntStateOf(progressStore.page(activeChildId, selectedBook.id).coerceIn(1, selectedBook.pageCount)) }
+    var bookmarked by remember(selectedBook.id, activeChildId, currentPage) { mutableStateOf(progressStore.isBookmarked(activeChildId, selectedBook.id, currentPage)) }
     val communityPosts = remember { mutableStateListOf<CommunityEntry>() }
     val groupPosts = remember { mutableStateListOf<CommunityEntry>() }
     val blockedCommunityAuthors = remember { mutableStateListOf<String>() }
-    val offlineBookTitles = remember { mutableStateListOf(books[0].title, books[1].title) }
     val purchaseHistory = remember { mutableStateListOf<PurchasePreview>() }
     val savedBooks = remember { mutableStateListOf<String>() }
     val page = stack.last()
@@ -515,6 +596,58 @@ fun LittlePagesApp() {
         }
     }
     fun openPremiumFeature() { if (premium) go(Page.Listen) else premiumPrompt = true }
+    fun savePublishedBookOffline(product: ManagedProduct, child: OfflineBookChildProfile) {
+        val accountId = firebaseUser?.uid?.takeIf { isAuthenticatedUser }
+        val manager = offlineDownloadManager
+        if (accountId == null || manager == null) {
+            showNotice("Offline storage unavailable", "Sign in with a configured account and connect the trusted book service before saving books.")
+            return
+        }
+        val locales = product.bookDetails?.locales.orEmpty()
+        val locale = if (selectedLanguage in locales) selectedLanguage else locales.firstOrNull() ?: selectedLanguage
+        offlineOperations = offlineOperations + product.id
+        coroutineScope.launch {
+            runCatching { manager.download(accountId, product.id, child.id, locale) }
+                .onSuccess { grant ->
+                    offlineSavedByProductId = offlineSavedByProductId + (product.id to true)
+                    showNotice("Saved for offline reading", "${product.title.english} is encrypted on this device until ${grant.expiresAt.atZone(java.time.ZoneId.systemDefault()).toLocalDate()}.")
+                }
+                .onFailure { error -> showNotice("Could not save book", error.message ?: "The trusted book service could not authorize this download.") }
+            offlineOperations = offlineOperations - product.id
+        }
+    }
+    fun requestSavePublishedBookOffline(product: ManagedProduct) {
+        if (!isAuthenticatedUser || firebaseUser?.uid == null) {
+            showNotice("Sign in required", "Sign in with a verified parent account to save a book for offline reading.")
+        } else if (offlineProfilesLoading) {
+            showNotice("Family profiles loading", "Wait for your parent-owned family profiles to finish loading, then try again.")
+        } else if (ownedOfflineChildren.isEmpty()) {
+            showNotice("Family profile unavailable", offlineProfileLoadError ?: "Offline access needs a child profile saved to your parent account. Local preview profiles cannot authorize book access.")
+        } else if (ownedOfflineChildren.size == 1) {
+            savePublishedBookOffline(product, ownedOfflineChildren.single())
+        } else childSelectionProduct = product
+    }
+    fun removePublishedBookOffline(product: ManagedProduct) {
+        val accountId = firebaseUser?.uid?.takeIf { isAuthenticatedUser }
+        val manager = offlineDownloadManager
+        if (accountId == null || manager == null) {
+            showNotice("Offline storage unavailable", "Sign in with the account that saved this book to remove its offline copy.")
+            return
+        }
+        offlineOperations = offlineOperations + product.id
+        coroutineScope.launch {
+            runCatching { manager.remove(accountId, product.id) }
+                .onSuccess {
+                    offlineSavedByProductId = offlineSavedByProductId + (product.id to false)
+                    showNotice("Offline copy removed", "${product.title.english} was removed from this device and its access grant was revoked.")
+                }
+                .onFailure { error ->
+                    offlineSavedByProductId = offlineSavedByProductId + (product.id to runCatching { manager.hasOfflineCopy(accountId, product.id) }.getOrDefault(false))
+                    showNotice("Could not finish removal", error.message ?: "The offline copy could not be fully removed.")
+                }
+            offlineOperations = offlineOperations - product.id
+        }
+    }
 
     BackHandler(enabled = stack.size > 1 || premiumPrompt) {
         if (premiumPrompt) premiumPrompt = false else back()
@@ -625,19 +758,19 @@ fun LittlePagesApp() {
                     }
                 }, onResend = { requestPhoneVerification(phoneRequestNumber, phoneResendToken) })
                 Page.ParentSetup -> ParentOnboardingScreen(email = pendingParentEmail.ifBlank { previewParentEmail }, onBack = ::back, onComplete = { name, email, child -> previewParentName = name; previewParentEmail = email; childProfiles.add(child); selectedChildId = child.id; parentPreviewMode = false; guestMode = false; stack.clear(); stack.add(Page.Home) })
-                Page.Home -> HomeScreen(continuePage = if (publishedSnapshot == null) progressStore.page(activeChildId, books[0].title).coerceIn(1, 24) else null, publishedCatalogActive = publishedSnapshot != null, publishedPage = publishedHomePage, publishedProducts = publishedProducts, productTypes = managedConfiguration.productTypes, productCategories = managedConfiguration.productCategories.ifEmpty { managedConfiguration.bookCategories }, storefronts = managedConfiguration.storefronts, storefrontIds = publishedStorefrontIds, promotions = publishedPromotions, onBook = { selectedBook = it; go(Page.BookDetails) }, onProduct = { selectedPublishedProduct = it; go(Page.PublishedProductDetails) }, onPromotion = ::openPromotionDestination, onCategory = { openPublishedCatalog(categoryId = it) }, onStorefront = { openPublishedCatalog(storefrontId = it) }, onContinue = { selectedBook = books[0]; go(Page.Reader) }, onLibrary = { openPublishedCatalog() }, onSearch = { go(Page.Search) }, onOffline = { stack.clear(); stack.add(Page.Offline) }, onPremium = { go(Page.Subscription) })
+                Page.Home -> HomeScreen(continuePage = if (publishedSnapshot == null) progressStore.page(activeChildId, books[0].id).coerceIn(1, books[0].pageCount) else null, publishedCatalogActive = publishedSnapshot != null, publishedPage = publishedHomePage, publishedProducts = publishedProducts, productTypes = managedConfiguration.productTypes, productCategories = managedConfiguration.productCategories.ifEmpty { managedConfiguration.bookCategories }, storefronts = managedConfiguration.storefronts, storefrontIds = publishedStorefrontIds, promotions = publishedPromotions, onBook = { selectedBook = it; go(Page.BookDetails) }, onProduct = { selectedPublishedProduct = it; go(Page.PublishedProductDetails) }, onPromotion = ::openPromotionDestination, onCategory = { openPublishedCatalog(categoryId = it) }, onStorefront = { openPublishedCatalog(storefrontId = it) }, onContinue = { selectedBook = books[0]; go(Page.Reader) }, onLibrary = { openPublishedCatalog() }, onSearch = { go(Page.Search) }, onOffline = { stack.clear(); stack.add(Page.Offline) }, onPremium = { go(Page.Subscription) })
                 Page.Library -> if (publishedSnapshot != null) PublishedCatalogScreen(products = publishedProducts, productTypes = managedConfiguration.productTypes, categories = managedConfiguration.productCategories.ifEmpty { managedConfiguration.bookCategories }, storefronts = managedConfiguration.storefronts, promotions = publishedPromotions, selectedCategoryId = selectedCatalogCategory, selectedStorefrontId = selectedCatalogStorefrontId, onCategory = { selectedCatalogCategory = it; selectedCatalogStorefrontId = null }, onProduct = { selectedPublishedProduct = it; go(Page.PublishedProductDetails) }, onSearch = { go(Page.Search) }, onOffline = { go(Page.Offline) }) else LibraryScreen(categories = managedConfiguration.bookCategories, onBook = { selectedBook = it; go(Page.BookDetails) }, onSearch = { go(Page.Search) }, onOffline = { go(Page.Offline) })
                 Page.Search -> SearchScreen(query = query, categories = managedConfiguration.productCategories.ifEmpty { managedConfiguration.bookCategories }, products = publishedProducts, promotions = publishedPromotions, usePublishedCatalog = publishedSnapshot != null, productTypes = managedConfiguration.productTypes, onQuery = { query = it }, onBook = { selectedBook = it; go(Page.BookDetails) }, onProduct = { selectedPublishedProduct = it; go(Page.PublishedProductDetails) }, onBack = ::back)
-                Page.BookDetails -> BookDetailsScreen(book = selectedBook, categories = managedConfiguration.bookCategories, saved = selectedBook.title in savedBooks, premiumUnlocked = premium, onPremiumRequired = { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else premiumPrompt = true }, onSave = { if (guestMode) unavailableNotice = "Create a parent account to save books." else if (selectedBook.title in savedBooks) savedBooks.remove(selectedBook.title) else savedBooks.add(selectedBook.title) }, onBack = ::back, onRead = { if (selectedBook.premiumOnly && !premium) { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else premiumPrompt = true } else go(Page.Reader) }, onListen = { if (guestMode) unavailableNotice = "Create a parent account to use Premium listening." else openPremiumFeature() }, onReviews = { go(Page.Reviews) }, onOrder = { if (guestMode) unavailableNotice = "Create a parent account to order books." else go(Page.Checkout) }, onRecovery = { recoveryType = "book"; go(Page.Recovery) })
-                Page.PublishedProductDetails -> selectedPublishedProduct?.let { product -> PublishedProductDetailsScreen(product = product, productTypes = managedConfiguration.productTypes, categories = managedConfiguration.productCategories.ifEmpty { managedConfiguration.bookCategories }, promotions = publishedPromotions, onBack = ::back, onUnavailable = { title, message -> showNotice(title, message) }) } ?: back()
-                Page.Reader -> ReaderScreen(book = selectedBook, mode = readerMode, page = currentPage, bookmarked = bookmarked, onBookmark = { bookmarked = progressStore.toggleBookmark(activeChildId, selectedBook.title, currentPage) }, onPage = { currentPage = it; progressStore.savePage(activeChildId, selectedBook.title, it) }, onMode = { readerMode = it }, onBack = ::back, onListen = ::openPremiumFeature, onPremium = { premiumPrompt = true })
-                Page.Listen -> ListenScreen(book = selectedBook, page = currentPage, autoplay = autoplay, onAutoplay = { autoplay = it }, onPageAdvance = { if (currentPage < 24) { currentPage += 1; progressStore.savePage(activeChildId, selectedBook.title, currentPage) } }, onBack = ::back)
+                Page.BookDetails -> BookDetailsScreen(book = selectedBook, categories = managedConfiguration.bookCategories, saved = selectedBook.id in savedBooks, premiumUnlocked = premium, onPremiumRequired = { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else premiumPrompt = true }, onSave = { if (guestMode) unavailableNotice = "Create a parent account to save books." else if (selectedBook.id in savedBooks) savedBooks.remove(selectedBook.id) else savedBooks.add(selectedBook.id) }, onBack = ::back, onRead = { if (selectedBook.premiumOnly && !premium) { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else premiumPrompt = true } else go(Page.Reader) }, onListen = { if (guestMode) unavailableNotice = "Create a parent account to use Premium listening." else openPremiumFeature() }, onReviews = { go(Page.Reviews) }, onOrder = { if (guestMode) unavailableNotice = "Create a parent account to order books." else go(Page.Checkout) }, onRecovery = { recoveryType = "book"; go(Page.Recovery) })
+                Page.PublishedProductDetails -> selectedPublishedProduct?.let { product -> PublishedProductDetailsScreen(product = product, productTypes = managedConfiguration.productTypes, categories = managedConfiguration.productCategories.ifEmpty { managedConfiguration.bookCategories }, promotions = publishedPromotions, offlineSaved = offlineSavedByProductId[product.id] == true, offlineBusy = product.id in offlineOperations, onSaveOffline = { requestSavePublishedBookOffline(product) }, onRefreshOffline = { requestSavePublishedBookOffline(product) }, onRemoveOffline = { removePublishedBookOffline(product) }, onBack = ::back, onUnavailable = { title, message -> showNotice(title, message) }) } ?: back()
+                Page.Reader -> ReaderScreen(book = selectedBook, mode = readerMode, page = currentPage, bookmarked = bookmarked, onBookmark = { bookmarked = progressStore.toggleBookmark(activeChildId, selectedBook.id, currentPage) }, onPage = { currentPage = it; progressStore.savePage(activeChildId, selectedBook.id, it) }, onMode = { readerMode = it }, onBack = ::back, onListen = ::openPremiumFeature, onPremium = { premiumPrompt = true })
+                Page.Listen -> ListenScreen(book = selectedBook, page = currentPage, autoplay = autoplay, onAutoplay = { autoplay = it }, onPageAdvance = { if (currentPage < selectedBook.pageCount) { currentPage += 1; progressStore.savePage(activeChildId, selectedBook.id, currentPage) } }, onBack = ::back)
                 Page.ListenPreview -> ListenScreen(book = selectedBook, page = currentPage, autoplay = false, onAutoplay = {}, onPageAdvance = {}, onBack = ::back, previewOnly = true)
                 Page.Community -> CommunityScreen(posts = communityPosts, categories = managedConfiguration.communityCategories, blockedAuthors = blockedCommunityAuthors, onBlockAuthor = { if (it !in blockedCommunityAuthors) blockedCommunityAuthors.add(it) }, onGroup = { if (guestMode) unavailableNotice = "Create a parent account to join a group." else go(Page.Group) }, onCreate = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
                 Page.Group -> GroupScreen(posts = groupPosts, blockedAuthors = blockedCommunityAuthors, onBlockAuthor = { if (it !in blockedCommunityAuthors) blockedCommunityAuthors.add(it) }, canParticipate = !guestMode, onBack = ::back, onCreatePost = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
                 Page.CreatePost -> CreatePostScreen(categories = managedConfiguration.communityCategories, maximumImageBytes = managedConfiguration.maximumCommunityImageBytes, allowedImageMimeTypes = managedConfiguration.allowedCommunityImageMimeTypes, onBack = ::back, onPost = { post -> if (stack.getOrNull(stack.lastIndex - 1) == Page.Group) groupPosts.add(0, post) else communityPosts.add(0, post); back() })
                 Page.Reviews -> ReviewsScreen(book = selectedBook, onBack = ::back)
-                Page.Offline -> OfflineScreen(books = books.filter { it.title in offlineBookTitles }, onBack = ::back, onBrowse = { stack.clear(); stack.add(Page.Library) }, onRemove = { offlineBookTitles.remove(it.title) }, onRetrySync = { recoveryType = "offline"; go(Page.Recovery) })
+                Page.Offline -> OfflineScreen(products = offlineBookProducts, savedByProductId = offlineSavedByProductId, busyProductIds = offlineOperations, signedIn = isAuthenticatedUser, profilesLoading = offlineProfilesLoading, profileCount = ownedOfflineChildren.size, profileLoadError = offlineProfileLoadError, onBack = ::back, onBrowse = { stack.clear(); stack.add(Page.Library) }, onRetryProfiles = { offlineProfileRefreshKey++ }, onSave = ::requestSavePublishedBookOffline, onRemove = ::removePublishedBookOffline)
                 Page.Parent -> ParentScreen(guest = guestMode, previewAccount = parentPreviewMode, authenticated = isAuthenticatedUser, parentName = previewParentName, parentEmail = authenticatedEmail ?: previewParentEmail, language = selectedLanguage, child = childProfiles.firstOrNull { it.id == activeChildId }, onLanguage = { tag -> selectedLanguage = tag; activity?.let { AppLanguage.set(it, tag) } }, onProfiles = { if (guestMode) unavailableNotice = "Create a parent account to add child profiles." else go(Page.Profiles) }, onSubscription = { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else go(Page.Subscription) }, onOrders = { if (guestMode) unavailableNotice = "Sign in to view orders." else go(Page.Orders) }, onSupport = { go(Page.Support) }, onOffline = { if (guestMode) unavailableNotice = "Sign in to manage offline books." else go(Page.Offline) }, onPrivacy = { go(Page.Privacy) }, onUnavailable = { message -> if (guestMode || parentPreviewMode || isAuthenticatedUser) returnToWelcome(signOut = isAuthenticatedUser) else unavailableNotice = message }, onCreateAccount = { returnToWelcome(signOut = isAuthenticatedUser) })
                 Page.Profiles -> ProfilesScreen(children = childProfiles, selectedChildId = activeChildId, progressStore = progressStore, onSelectChild = { selectedChildId = it }, onBack = ::back, onSaveChild = { old, updated -> if (old == null) childProfiles.add(updated) else { val index = childProfiles.indexOf(old); if (index >= 0) childProfiles[index] = updated } })
                 Page.Privacy -> PrivacyScreen(onBack = ::back)
@@ -657,6 +790,21 @@ fun LittlePagesApp() {
         }
         unavailableNotice?.let { message ->
             AlertDialog(onDismissRequest = { unavailableNotice = null }, title = { AppText(noticeTitle) }, text = { AppText(message) }, confirmButton = { TextButton(onClick = { unavailableNotice = null }) { AppText("OK") } })
+        }
+        childSelectionProduct?.let { product ->
+            AlertDialog(
+                onDismissRequest = { childSelectionProduct = null },
+                title = { AppText("Choose a child profile") },
+                text = { Column(verticalArrangement = Arrangement.spacedBy(PagesSpacing.Dense)) {
+                    AppText("Offline access is granted for one parent-owned child profile.")
+                    ownedOfflineChildren.forEach { child ->
+                        TextButton(onClick = { childSelectionProduct = null; savePublishedBookOffline(product, child) }) {
+                            AppText(listOf(child.nickname, child.ageBand).filter(String::isNotBlank).joinToString(" · "))
+                        }
+                    }
+                } },
+                confirmButton = { TextButton(onClick = { childSelectionProduct = null }) { AppText("Cancel") } }
+            )
         }
     }
 }
@@ -1000,7 +1148,7 @@ private fun PublishedProductRow(product: ManagedProduct, productTypes: List<Mana
 }
 
 @Composable
-private fun PublishedProductDetailsScreen(product: ManagedProduct, productTypes: List<ManagedProductType>, categories: List<ManagedCategory>, promotions: List<ManagedPromotion>, onBack: () -> Unit, onUnavailable: (String, String) -> Unit) {
+private fun PublishedProductDetailsScreen(product: ManagedProduct, productTypes: List<ManagedProductType>, categories: List<ManagedCategory>, promotions: List<ManagedPromotion>, offlineSaved: Boolean, offlineBusy: Boolean, onSaveOffline: () -> Unit, onRefreshOffline: () -> Unit, onRemoveOffline: () -> Unit, onBack: () -> Unit, onUnavailable: (String, String) -> Unit) {
     val language = LocalConfiguration.current.locales[0].language
     var currentTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(60_000); currentTime = System.currentTimeMillis() } }
@@ -1079,6 +1227,23 @@ private fun PublishedProductDetailsScreen(product: ManagedProduct, productTypes:
             OutlinedButton(onClick = { onUnavailable(if (language == "bn") "পড়া প্রস্তুত নয়" else "Reading isn’t ready", if (language == "bn") "এই বইয়ের ব্যক্তিগত পাঠ-ফাইল এখনো সংযুক্ত হয়নি।" else "The private reader file for this published book is not connected yet.") }, modifier = Modifier.fillMaxWidth(), enabled = false) {
                 AppText(if (language == "bn") "অ্যাপে পড়ুন · কনটেন্টের অপেক্ষায়" else "Read in app · content pending")
             }
+        }
+        if (isBook && details?.pdfInAppEnabled == true) {
+            Spacer(Modifier.height(PagesSpacing.ControlGap))
+            if (offlineSaved) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PagesSpacing.Small)) {
+                    TextButton(onClick = onRefreshOffline, enabled = !offlineBusy, modifier = Modifier.weight(1f)) {
+                        if (offlineBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Filled.Refresh, contentDescription = null, tint = PagesColors.Forest)
+                        AppText(if (language == "bn") "অ্যাক্সেস রিফ্রেশ" else "Refresh access", color = PagesColors.Forest)
+                    }
+                    TextButton(onClick = onRemoveOffline, enabled = !offlineBusy, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Filled.DeleteOutline, contentDescription = null, tint = PagesColors.Forest)
+                        AppText(if (language == "bn") "কপি সরান" else "Remove copy", color = PagesColors.Forest)
+                    }
+                }
+            } else PrimaryButton(if (offlineBusy) { if (language == "bn") "সংরক্ষণ হচ্ছে…" else "Saving…" } else { if (language == "bn") "অফলাইনে সংরক্ষণ করুন" else "Save for offline reading" }, Icons.Filled.CloudDownload, enabled = !offlineBusy, onClick = onSaveOffline)
+            AppText(if (language == "bn") "অফলাইন বই এনক্রিপ্ট করে ডিভাইসে রাখা হয়; প্রবেশাধিকার যাচাই করে সার্ভার।" else "Offline books are encrypted on this device and authorized by the trusted service.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
         }
         if (!isBook || details?.physicalEditionAvailable == true) {
             Spacer(Modifier.height(PagesSpacing.ControlGap))
@@ -1217,14 +1382,14 @@ private fun BookDetailsScreen(book: Book, categories: List<ManagedCategory>, sav
             Column(Modifier.weight(1f).padding(start = PagesSpacing.Medium)) {
                 AppText(book.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 AppText("by ${book.author}", color = PagesColors.Muted)
-                Spacer(Modifier.height(PagesSpacing.ControlGap)); AppText("${book.age}   ·   24 pages", style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.height(PagesSpacing.ControlGap)); AppText("${book.age}   ·   ${book.pageCount} pages", style = MaterialTheme.typography.labelMedium)
                 val accessLabel = when { !book.isAvailable -> "Unavailable"; book.premiumOnly -> "Premium story"; else -> "Standard story" }
                 Surface(shape = CircleShape, color = if (book.premiumOnly && book.isAvailable) PagesColors.Peach else PagesColors.Sage, modifier = Modifier.padding(top = PagesSpacing.Small)) { AppText(accessLabel, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = PagesSpacing.Compact, vertical = PagesSpacing.ExtraSmall)) }
                 TextButton(onClick = onReviews, contentPadding = PaddingValues(horizontal = PagesSpacing.Small)) { AppText("⭐ ${book.rating}  ·  1.2K reviews", color = PagesColors.Gold) }
             }
         }
         Spacer(Modifier.height(PagesSpacing.SectionGap))
-        AppText("A story about kindness, courage, and finding your voice. Follow a curious little fox as a new adventure leads to an unexpected friendship.", color = PagesColors.Muted, style = MaterialTheme.typography.bodyMedium)
+        AppText(book.product.description.english, color = PagesColors.Muted, style = MaterialTheme.typography.bodyMedium)
         val bookCategoryLabels = book.categories.mapNotNull { id -> categories.firstOrNull { it.id == id && it.enabled }?.label(language) }
         if (bookCategoryLabels.isNotEmpty()) { Spacer(Modifier.height(PagesSpacing.Medium)); ChipRow(bookCategoryLabels) }
         Spacer(Modifier.height(PagesSpacing.Large))
@@ -1243,11 +1408,11 @@ private fun BookDetailsScreen(book: Book, categories: List<ManagedCategory>, sav
                 CardSurface(Modifier.fillMaxWidth()) {
                     Column {
                         if (book.pdfAvailable) {
-                            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.TabletAndroid, null, tint = PagesColors.Forest); Column(Modifier.weight(1f).padding(start = PagesSpacing.Compact)) { AppText("PDF · Read in app", fontWeight = FontWeight.SemiBold); AppText("Instant access · no PDF download", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }; AppText("৳120", fontWeight = FontWeight.Bold) }
+                            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.TabletAndroid, null, tint = PagesColors.Forest); Column(Modifier.weight(1f).padding(start = PagesSpacing.Compact)) { AppText("PDF · Read in app", fontWeight = FontWeight.SemiBold); AppText("Instant access · no PDF download", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }; AppText(priceLabel(book.variant("in-app")), fontWeight = FontWeight.Bold) }
                         }
                         if (book.pdfAvailable && book.physicalAvailable) HorizontalDivider(Modifier.padding(vertical = PagesSpacing.Compact), color = PagesColors.Line)
                         if (book.physicalAvailable) {
-                            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.LocalShipping, null, tint = PagesColors.Forest); Column(Modifier.weight(1f).padding(start = PagesSpacing.Compact)) { AppText("Printed book", fontWeight = FontWeight.SemiBold); AppText("Available · delivery in Bangladesh", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }; AppText("৳450", fontWeight = FontWeight.Bold) }
+                            Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Filled.LocalShipping, null, tint = PagesColors.Forest); Column(Modifier.weight(1f).padding(start = PagesSpacing.Compact)) { AppText("Printed book", fontWeight = FontWeight.SemiBold); AppText("Available · delivery in Bangladesh", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }; AppText(priceLabel(book.variant(book.details.physicalEditionVariantId.orEmpty())), fontWeight = FontWeight.Bold) }
                         }
                         Spacer(Modifier.height(PagesSpacing.CardContent)); PrimaryButton("Order a book", Icons.Filled.ShoppingCart, onOrder)
                     }
@@ -1305,7 +1470,7 @@ private fun ReaderScreen(book: Book, mode: String, page: Int, bookmarked: Boolea
             }
         } else if (mode == "Scroll") {
             Column(Modifier.weight(1f).fillMaxWidth().padding(horizontal = PagesSpacing.CardContent).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(PagesSpacing.Compact)) {
-                (page..(page + 2).coerceAtMost(24)).forEach { scrollPage ->
+                (page..(page + 2).coerceAtMost(book.pageCount)).forEach { scrollPage ->
                     CardSurface(Modifier.fillMaxWidth(), color = PagesColors.Paper) {
                         AppText("Page $scrollPage", style = MaterialTheme.typography.labelMedium, color = PagesColors.Forest, fontWeight = FontWeight.Bold)
                         AppText(sampleStoryPages[(scrollPage - 1) % sampleStoryPages.size], style = MaterialTheme.typography.titleLarge, lineHeight = 36.sp, color = PagesColors.Ink, modifier = Modifier.padding(top = PagesSpacing.ControlGap))
@@ -1322,8 +1487,8 @@ private fun ReaderScreen(book: Book, mode: String, page: Int, bookmarked: Boolea
         if (compactWidth) {
             Row(Modifier.fillMaxWidth().padding(horizontal = PagesSpacing.Medium), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { onPage((page - 1).coerceAtLeast(1)) }, enabled = page > 1) { Icon(Icons.Filled.ChevronLeft, localizedAppCopy("Previous page"), tint = PagesColors.Forest) }
-                Spacer(Modifier.weight(1f)); AppText("$page / 24", fontWeight = FontWeight.SemiBold); Spacer(Modifier.weight(1f))
-                IconButton(onClick = { onPage((page + 1).coerceAtMost(24)) }, enabled = page < 24) { Icon(Icons.Filled.ChevronRight, localizedAppCopy("Next page"), tint = PagesColors.Forest) }
+                Spacer(Modifier.weight(1f)); AppText("$page / ${book.pageCount}", fontWeight = FontWeight.SemiBold); Spacer(Modifier.weight(1f))
+                IconButton(onClick = { onPage((page + 1).coerceAtMost(book.pageCount)) }, enabled = page < book.pageCount) { Icon(Icons.Filled.ChevronRight, localizedAppCopy("Next page"), tint = PagesColors.Forest) }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = PagesSpacing.Medium), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 TextButton(onClick = { onMode(when (mode) { "Page turn" -> "Scroll"; "Scroll" -> "PDF"; else -> "Page turn" }) }) { AppText("Mode: $mode", color = PagesColors.Forest) }
@@ -1332,10 +1497,10 @@ private fun ReaderScreen(book: Book, mode: String, page: Int, bookmarked: Boolea
         } else {
             Row(Modifier.fillMaxWidth().padding(horizontal = PagesSpacing.Medium), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 IconButton(onClick = { onPage((page - 1).coerceAtLeast(1)) }, enabled = page > 1) { Icon(Icons.Filled.ChevronLeft, localizedAppCopy("Previous page"), tint = PagesColors.Forest) }
-                AppText("$page / 24", fontWeight = FontWeight.SemiBold)
+                AppText("$page / ${book.pageCount}", fontWeight = FontWeight.SemiBold)
                 TextButton(onClick = { onMode(when (mode) { "Page turn" -> "Scroll"; "Scroll" -> "PDF"; else -> "Page turn" }) }) { AppText(mode, color = PagesColors.Forest) }
                 Button(onClick = onListen, modifier = Modifier.heightIn(min = PagesSizes.MinimumTouchTarget), shape = RoundedCornerShape(PagesShapes.LargeCard), colors = ButtonDefaults.buttonColors(containerColor = PagesColors.Forest), contentPadding = PaddingValues(horizontal = PagesSpacing.Compact, vertical = PagesSpacing.Small)) { Icon(Icons.AutoMirrored.Filled.VolumeUp, null, tint = Color.White, modifier = Modifier.size(PagesSizes.IconSmall)); AppText(" Listen", color = Color.White, fontWeight = FontWeight.SemiBold) }
-                IconButton(onClick = { onPage((page + 1).coerceAtMost(24)) }, enabled = page < 24) { Icon(Icons.Filled.ChevronRight, localizedAppCopy("Next page"), tint = PagesColors.Forest) }
+                IconButton(onClick = { onPage((page + 1).coerceAtMost(book.pageCount)) }, enabled = page < book.pageCount) { Icon(Icons.Filled.ChevronRight, localizedAppCopy("Next page"), tint = PagesColors.Forest) }
             }
         }
         Spacer(Modifier.height(PagesSpacing.ControlGap))
@@ -1410,7 +1575,7 @@ private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (
     LaunchedEffect(narrationState.finished, page, autoplay) {
         if (narrationState.finished && lastAutoAdvancedPage == page) {
             position = 1f
-            if (autoplay && !previewOnly && page < 24) {
+            if (autoplay && !previewOnly && page < book.pageCount) {
                 lastAutoAdvancedPage = page + 1
                 onPageAdvance()
             } else { isPlaying = false; audioFocus.abandon() }
@@ -1625,28 +1790,58 @@ private fun ReviewsScreen(book: Book, onBack: () -> Unit) {
 }
 
 @Composable
-private fun OfflineScreen(books: List<Book>, onBack: () -> Unit, onBrowse: () -> Unit, onRemove: (Book) -> Unit, onRetrySync: () -> Unit) {
-    var bookToRemove by remember { mutableStateOf<Book?>(null) }
-    PageScaffold(onBack, "Available offline") {
+private fun OfflineScreen(
+    products: List<ManagedProduct>, savedByProductId: Map<String, Boolean>, busyProductIds: Set<String>,
+    signedIn: Boolean, profilesLoading: Boolean, profileCount: Int, profileLoadError: String?, onBack: () -> Unit,
+    onBrowse: () -> Unit, onRetryProfiles: () -> Unit, onSave: (ManagedProduct) -> Unit, onRemove: (ManagedProduct) -> Unit
+) {
+    val language = LocalConfiguration.current.locales[0].language
+    PageScaffold(onBack, if (language == "bn") "অফলাইনে পড়ুন" else "Available offline") {
         CardSurface(Modifier.fillMaxWidth(), color = PagesColors.Sage) {
-            AppText("Storage and sync preview", fontWeight = FontWeight.Bold)
-            AppText("These are sample list entries only. No book files are stored on this device, and real storage usage is not available yet.", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
-            AppText("Sync status · Not connected", color = PagesColors.Forest, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = PagesSpacing.Small))
-            TextButton(onClick = onRetrySync, contentPadding = PaddingValues(horizontal = PagesSpacing.Small)) { AppText("Retry sync", color = PagesColors.Forest) }
+            AppText(if (language == "bn") "নিরাপদ অফলাইন স্টোরেজ" else "Secure offline storage", fontWeight = FontWeight.Bold)
+            AppText(if (signedIn) {
+                if (language == "bn") "শুধু প্রকাশিত বই ও আপনার parent account-এ থাকা child profile দিয়ে অফলাইন প্রবেশাধিকার যাচাই হয়।" else "Offline access is checked for published books and child profiles saved to your parent account."
+            } else {
+                if (language == "bn") "অফলাইনে বই রাখতে parent account-এ সাইন ইন করুন।" else "Sign in to a parent account to save books for offline reading."
+            }, color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
+            val status = when {
+                profilesLoading -> if (language == "bn") "পরিবারের profile লোড হচ্ছে…" else "Loading family profiles…"
+                profileLoadError != null -> if (language == "bn") "পরিবারের profile পাওয়া যায়নি। আবার চেষ্টা করতে ইন্টারনেট সংযোগ পরীক্ষা করুন।" else "Family profiles are unavailable. Check your connection and try again."
+                signedIn && profileCount == 0 -> if (language == "bn") "parent account-এ child profile নেই" else "No child profiles are saved to this parent account"
+                signedIn -> if (language == "bn") "${profileCount}টি parent-owned profile পাওয়া গেছে" else "$profileCount parent-owned profile(s) available"
+                else -> if (language == "bn") "সিঙ্ক অবস্থা · সংযুক্ত নয়" else "Sync status · Not connected"
+            }
+            AppText(status, color = PagesColors.Forest, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = PagesSpacing.Small))
+            if (signedIn && !profilesLoading) TextButton(onClick = onRetryProfiles, contentPadding = PaddingValues(horizontal = PagesSpacing.Small)) {
+                AppText(if (language == "bn") "আবার চেষ্টা করুন" else "Refresh family profiles", color = PagesColors.Forest)
+            }
         }
-        SectionTitle("Offline book list")
-        if (books.isEmpty()) EmptyState(Icons.Filled.CloudOff, stringResource(R.string.no_offline_books), "Books you save for offline reading will appear here after private encrypted storage is connected.", stringResource(R.string.browse_books), onBrowse)
-        books.forEach { book ->
+        SectionTitle(if (language == "bn") "প্রকাশিত বই" else "Published books")
+        if (products.isEmpty()) EmptyState(Icons.Filled.CloudOff, if (language == "bn") "প্রকাশিত বই নেই" else "No published books", if (language == "bn") "বই প্রকাশিত হলে এখানে অফলাইন কপি সংরক্ষণ করতে পারবেন।" else "Published books that support in-app reading will appear here.", if (language == "bn") "ক্যাটালগ দেখুন" else "Browse catalogue", onBrowse)
+        products.forEach { product ->
+            val saved = savedByProductId[product.id] == true
+            val title = if (language == "bn") product.title.bangla else product.title.english
             CardSurface(Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    BookCover(book, Modifier.size(PagesSizes.BookListCover))
-                    Column(Modifier.weight(1f).padding(horizontal = PagesSpacing.Compact)) { AppText(book.title, fontWeight = FontWeight.Bold); AppText("Preview entry · file not stored", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) }
-                    IconButton(onClick = { bookToRemove = book }) { Icon(Icons.Filled.DeleteOutline, localizedAppCopy("Remove ${book.title} from preview list"), tint = PagesColors.Forest) }
+                    Icon(if (saved) Icons.Filled.CloudDone else Icons.Filled.AutoStories, contentDescription = null, tint = PagesColors.Forest, modifier = Modifier.size(PagesSizes.BookListCover))
+                    Column(Modifier.weight(1f).padding(horizontal = PagesSpacing.Compact)) {
+                        AppText(title, fontWeight = FontWeight.Bold)
+                        AppText(if (saved) { if (language == "bn") "এই ডিভাইসে এনক্রিপ্ট করা" else "Encrypted on this device" } else { if (language == "bn") "অফলাইনে সংরক্ষণ করা হয়নি" else "Not saved on this device" }, color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (saved) {
+                        if (product.id in busyProductIds) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                        else {
+                            IconButton(onClick = { onSave(product) }, content = { Icon(Icons.Filled.Refresh, contentDescription = if (language == "bn") "$title-এর অফলাইন প্রবেশাধিকার রিফ্রেশ করুন" else "Refresh offline access for $title", tint = PagesColors.Forest) })
+                            IconButton(onClick = { onRemove(product) }, content = { Icon(Icons.Filled.DeleteOutline, contentDescription = if (language == "bn") "$title সরান" else "Remove $title", tint = PagesColors.Forest) })
+                        }
+                    } else IconButton(onClick = { onSave(product) }, enabled = signedIn && !profilesLoading && product.id !in busyProductIds) {
+                        if (product.id in busyProductIds) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Filled.CloudDownload, contentDescription = if (language == "bn") "$title অফলাইনে সংরক্ষণ করুন" else "Save $title offline", tint = PagesColors.Forest)
+                    }
                 }
             }
         }
     }
-    bookToRemove?.let { book -> AlertDialog(onDismissRequest = { bookToRemove = null }, title = { AppText("Remove this book?") }, text = { AppText("${book.title} will be removed from the sample list. No stored book file will be deleted.") }, confirmButton = { TextButton(onClick = { onRemove(book); bookToRemove = null }) { AppText("Remove") } }, dismissButton = { TextButton(onClick = { bookToRemove = null }) { AppText("Cancel") } }) }
 }
 
 @Composable
@@ -1685,8 +1880,8 @@ private fun ProfilesScreen(children: List<ChildProfile>, selectedChildId: String
     PageScaffold(onBack, "Child profiles") {
         AppText("Preview profiles are held in memory only; account sync and consent settings are not configured.", color = PagesColors.Muted)
         children.forEach { child ->
-            val startedBooks = books.count { progressStore.page(child.id, it.title) > 1 }
-            val lastReadPage = progressStore.page(child.id, books.first().title).coerceIn(1, 24)
+            val startedBooks = books.count { progressStore.page(child.id, it.id) > 1 }
+            val lastReadPage = progressStore.page(child.id, books.first().id).coerceIn(1, books.first().pageCount)
             CardSurface(Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = selectedChildId == child.id, onClick = { onSelectChild(child.id) })
@@ -1767,8 +1962,8 @@ private fun CheckoutScreen(book: Book, onBack: () -> Unit, onComplete: (format: 
     val validAddress = format != "Printed book" || (fullName.isNotBlank() && address.isNotBlank() && phone.filter(Char::isDigit).length >= 8)
     PageScaffold(onBack, "Choose a format") {
         CardSurface(Modifier.fillMaxWidth()) { Row(verticalAlignment = Alignment.CenterVertically) { BookCover(book, Modifier.size(PagesSizes.CheckoutBookCover)); Column(Modifier.padding(start = PagesSpacing.Compact)) { AppText(book.title, fontWeight = FontWeight.Bold); AppText("Choose how your family will read", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall) } } }
-        if (book.pdfAvailable) FormatChoice("PDF · Read in app", "৳120", "Instant access. Downloading and exporting are disabled.", format == "PDF · Read in app") { format = "PDF · Read in app" }
-        if (book.physicalAvailable) FormatChoice("Printed book", "৳450", "Physical edition available · delivery address required", format == "Printed book") { format = "Printed book" }
+        if (book.pdfAvailable) FormatChoice("PDF · Read in app", priceLabel(book.variant("in-app")), "Instant access. Downloading and exporting are disabled.", format == "PDF · Read in app") { format = "PDF · Read in app" }
+        if (book.physicalAvailable) FormatChoice("Printed book", priceLabel(book.variant(book.details.physicalEditionVariantId.orEmpty())), "Physical edition available · delivery address required", format == "Printed book") { format = "Printed book" }
         if (format == "Printed book") {
             SectionTitle("Delivery address")
             OutlinedTextField(fullName, { fullName = it }, label = { AppText("Full name") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Control), singleLine = true, isError = submitted && fullName.isBlank())

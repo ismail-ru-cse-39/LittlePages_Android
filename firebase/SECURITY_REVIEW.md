@@ -8,7 +8,7 @@
 
 - Public clients may read only published manifests, immutable public catalogue/configuration revisions, automatic promotion display data, and public book metadata. Discount-code digests and redemption information are never public.
 - Clients may not write publication manifests, published snapshots, product publication status, prices, stock reservations, entitlements, payment events, subscription state, moderation outcomes, role assignments, audit events, or private book assets.
-- Parent data must be scoped to the authenticated parent UID. Child profiles, reading progress, bookmarks, orders, and privacy requests must be checked against parent ownership in a trusted service.
+- Parent data must be scoped to the authenticated parent UID. The current Firestore draft permits owner-only reads of child profile documents and denies client writes; reading progress, bookmarks, orders, and privacy requests remain denied until a trusted, owner-approved access model is implemented.
 - Drafts and unpublished assets are staff-only. Role changes and publisher/moderator operations require trusted server authorization and audit records.
 - Book and narration assets remain private. The trusted access service issues only short-lived access after entitlement checks; never expose a public Storage path.
 - Community writes require a parent identity and server-side content/size/rate checks. Moderated content is not visible until the server sets the approved state. Reports are private to the reporter and authorized moderators.
@@ -29,4 +29,4 @@ Prefer separate publisher and moderator assignments. Staff identity changes, rol
 
 ## Before rules can be deployed
 
-Confirm the collection layout, staff identity source, role lifecycle, parent/child ownership model, moderation visibility states, App Check registrations, and Storage upload flow. Add Firebase Emulator Suite rule tests, review the rules with the security owner, and deploy to development first. The current rules only unlock public published storefront reads; they do not implement the remaining authenticated user, staff, or Storage rules. Keep the Phase 3 security task unchecked until those steps pass.
+Confirm the collection layout, staff identity source, role lifecycle, parent/child ownership model, moderation visibility states, App Check registrations, and Storage upload flow. Add Firebase Emulator Suite rule tests, review the rules with the security owner, and deploy to development first. The current rules unlock public published storefront reads and owner-only child-profile reads. They still deny client writes, staff document access, progress/bookmark/order data, and Storage access. Keep the Phase 3 security task unchecked until the remaining access model is approved, emulator-verified, and deployed.

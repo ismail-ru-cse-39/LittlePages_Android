@@ -151,3 +151,11 @@ dialog#publishDialog .dialog-actions { flex-wrap: wrap; }
   .one-time-code-export { align-items: flex-start; flex-direction: column; }
   .asset-form { grid-template-columns: 1fr 1fr; }
 }
+ .page-preview-dialog { width: min(760px, calc(100% - 32px)); max-height: min(85vh, 860px); overflow: auto; }
+ .page-preview-dialog > h2 { margin-top: 8px; }
+ .page-preview-blocks { display: grid; gap: 12px; margin-top: 18px; }
+ .page-preview-block { border: 1px solid var(--line); border-radius: 14px; padding: 16px; background: white; }
+ .page-preview-block h3 { margin: 0 0 8px; font-size: 15px; }
+ .page-preview-block p { margin: 0; }
+ .page-preview-products { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+ .page-preview-products span { border-radius: 10px; background: #f2f5ef; padding: 12px; color: var(--forest); font-size: 11px; }

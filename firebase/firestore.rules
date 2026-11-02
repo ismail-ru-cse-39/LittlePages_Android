@@ -25,7 +25,14 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // All user, staff, draft, payment, entitlement, moderation, and other data stays closed.
+    // Parents may read only their own server-created child profiles for account UI and access selection.
+    // Profile writes remain server-only; callable functions independently verify ownership.
+    match /users/{uid}/children/{childId} {
+      allow get, list: if request.auth != null && request.auth.uid == uid;
+      allow create, update, delete: if false;
+    }
+
+    // Staff, drafts, payments, entitlements, moderation, and all other user data stays closed.
     match /{document=**} {
       allow read, write: if false;
     }

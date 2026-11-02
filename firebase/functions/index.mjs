@@ -217,11 +217,28 @@ export const refreshOfflineBookGrant = onCall(
       const manifestSnapshot = await transaction.get(manifestRef);
       if (!manifestSnapshot.exists) throw new HttpsError('failed-precondition', 'No published catalogue is available.');
       const catalogRevision = manifestSnapshot.get('catalogRevision');
-      if (!Number.isSafeInteger(catalogRevision) || catalogRevision < 1) throw new HttpsError('failed-precondition', 'The published catalogue revision is invalid.');
+      const configurationRevision = manifestSnapshot.get('configurationRevision');
+      if (!Number.isSafeInteger(catalogRevision) || catalogRevision < 1 || !Number.isSafeInteger(configurationRevision) || configurationRevision < 1) {
+        throw new HttpsError('failed-precondition', 'The published catalogue or configuration revision is invalid.');
+      }
       const productRef = firestore.collection('catalogRevisions').doc(String(catalogRevision)).collection('products').doc(bookId);
-      const [userSnapshot, childSnapshot, productSnapshot, currentGrantSnapshot] = await Promise.all([
-        transaction.get(userRef), transaction.get(childRef), transaction.get(productRef), transaction.get(grantRef)
+      const configurationRef = firestore.collection('configurationRevisions').doc(String(configurationRevision));
+      const [userSnapshot, childSnapshot, productSnapshot, currentGrantSnapshot, configurationSnapshot] = await Promise.all([
+        transaction.get(userRef), transaction.get(childRef), transaction.get(productRef), transaction.get(grantRef), transaction.get(configurationRef)
       ]);
+      const offlinePolicy = configurationSnapshot.get('configuration')?.offlinePolicy;
+      if (!configurationSnapshot.exists || offlinePolicy?.enabled !== true || offlinePolicy?.encryptAppPrivateStorage !== true ||
+          offlinePolicy?.removeWhenEntitlementExpires !== true || offlinePolicy?.allowExport !== false) {
+        throw new HttpsError('failed-precondition', 'Published offline access is disabled or its policy is invalid.');
+      }
+      const maximumBooks = offlinePolicy.maximumBooksPerFamily;
+      const leaseDays = offlinePolicy.accessLeaseDays;
+      const refreshDays = offlinePolicy.onlineRefreshAfterDays;
+      if (!Number.isSafeInteger(maximumBooks) || maximumBooks < 1 || maximumBooks > 10 ||
+          !Number.isSafeInteger(leaseDays) || leaseDays < 1 || leaseDays > 30 ||
+          !Number.isSafeInteger(refreshDays) || refreshDays < 1 || refreshDays > 7) {
+        throw new HttpsError('failed-precondition', 'Published offline access limits are invalid.');
+      }
       if (!userSnapshot.exists || userSnapshot.get('state') !== 'active') throw new HttpsError('failed-precondition', 'An active parent account is required.');
       if (!childSnapshot.exists) throw new HttpsError('permission-denied', 'The child profile does not belong to this account.');
       if (!productSnapshot.exists || productSnapshot.get('status') !== 'published' || productSnapshot.get('typeId') !== 'book') {
@@ -264,12 +281,14 @@ export const refreshOfflineBookGrant = onCall(
         : [];
       const activeBookIds = trackedSnapshots.filter(snapshot => snapshot.exists && snapshot.get('state') === 'active' && (timestampMillis(snapshot.get('expiresAt')) ?? 0) > now).map(snapshot => snapshot.id);
       const alreadyActive = currentGrantSnapshot.exists && currentGrantSnapshot.get('state') === 'active' && (timestampMillis(currentGrantSnapshot.get('expiresAt')) ?? 0) > now;
-      if (!alreadyActive && !activeBookIds.includes(bookId) && activeBookIds.length >= 10) throw new HttpsError('resource-exhausted', 'The family offline book limit has been reached.');
-      const expiresAt = Math.min(now + 30 * 24 * 60 * 60 * 1000, entitlementExpiry ?? Number.MAX_SAFE_INTEGER);
+      if (!alreadyActive && !activeBookIds.includes(bookId) && activeBookIds.length >= maximumBooks) throw new HttpsError('resource-exhausted', 'The family offline book limit has been reached.');
+      const expiresAt = Math.min(now + leaseDays * 24 * 60 * 60 * 1000, entitlementExpiry ?? Number.MAX_SAFE_INTEGER);
       if (expiresAt <= now) throw new HttpsError('permission-denied', 'The book entitlement has expired.');
+      const refreshAfter = Math.min(now + refreshDays * 24 * 60 * 60 * 1000, expiresAt - 1000);
+      if (refreshAfter <= now) throw new HttpsError('permission-denied', 'The book entitlement expires too soon for an offline grant.');
       const nextGrant = {
         uid, childId, bookId, locale, contentVersion, state: 'active', source,
-        issuedAt: FieldValue.serverTimestamp(), refreshAfter: new Date(now + 7 * 24 * 60 * 60 * 1000),
+        issuedAt: FieldValue.serverTimestamp(), refreshAfter: new Date(refreshAfter),
         expiresAt: new Date(expiresAt), entitlementExpiresAt: entitlementExpiry == null ? null : new Date(entitlementExpiry)
       };
       transaction.set(grantRef, nextGrant);
@@ -328,7 +347,16 @@ export const createOfflineBookDownloadUrl = onCall(
     const contentVersion = grant.contentVersion;
     const manifest = await firestore.collection('publicConfiguration').doc('current').get();
     const catalogRevision = manifest.get('catalogRevision');
-    if (!Number.isSafeInteger(catalogRevision) || catalogRevision < 1) throw new HttpsError('failed-precondition', 'The published catalogue is unavailable.');
+    const configurationRevision = manifest.get('configurationRevision');
+    if (!Number.isSafeInteger(catalogRevision) || catalogRevision < 1 || !Number.isSafeInteger(configurationRevision) || configurationRevision < 1) {
+      throw new HttpsError('failed-precondition', 'The published catalogue is unavailable.');
+    }
+    const configurationSnapshot = await firestore.collection('configurationRevisions').doc(String(configurationRevision)).get();
+    const offlinePolicy = configurationSnapshot.get('configuration')?.offlinePolicy;
+    if (!configurationSnapshot.exists || offlinePolicy?.enabled !== true || offlinePolicy?.encryptAppPrivateStorage !== true ||
+        offlinePolicy?.removeWhenEntitlementExpires !== true || offlinePolicy?.allowExport !== false) {
+      throw new HttpsError('failed-precondition', 'Published offline access is disabled or its policy is invalid.');
+    }
     const productSnapshot = await firestore.collection('catalogRevisions').doc(String(catalogRevision)).collection('products').doc(bookId).get();
     const product = productSnapshot.data() ?? {};
     const details = product.bookDetails ?? {};
@@ -365,6 +393,84 @@ export const createOfflineBookDownloadUrl = onCall(
     const expiresAt = now + 15 * 60 * 1000;
     const [url] = await file.getSignedUrl({ action: 'read', expires: expiresAt, version: 'v4' });
     return { url, expiresAt: new Date(expiresAt).toISOString(), bookId, childId, locale, contentVersion, sha256: asset.sha256, byteLength: asset.byteLength };
+  }
+);
+
+export const resolveBookAccess = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 15 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const bookId = requiredString(request.data?.bookId, 'bookId', 80);
+    const childId = requiredString(request.data?.childId, 'childId', 80);
+    const locale = request.data?.locale;
+    if (!/^[a-z0-9_-]{2,80}$/.test(bookId) || !/^[A-Za-z0-9_-]{1,80}$/.test(childId) || !['en', 'bn'].includes(locale)) {
+      throw new HttpsError('invalid-argument', 'Choose a valid book, child profile, and supported locale.');
+    }
+    const userRef = firestore.collection('users').doc(uid);
+    const [userSnapshot, childSnapshot, manifestSnapshot] = await Promise.all([
+      userRef.get(), userRef.collection('children').doc(childId).get(), firestore.collection('publicConfiguration').doc('current').get()
+    ]);
+    if (!userSnapshot.exists || userSnapshot.get('state') !== 'active' || !childSnapshot.exists) {
+      throw new HttpsError('permission-denied', 'An active parent account and owned child profile are required.');
+    }
+    const catalogRevision = manifestSnapshot.get('catalogRevision');
+    const configurationRevision = manifestSnapshot.get('configurationRevision');
+    if (!Number.isSafeInteger(catalogRevision) || catalogRevision < 1 || !Number.isSafeInteger(configurationRevision) || configurationRevision < 1) {
+      throw new HttpsError('failed-precondition', 'The published catalogue is unavailable.');
+    }
+    const [productSnapshot, configurationSnapshot] = await Promise.all([
+      firestore.collection('catalogRevisions').doc(String(catalogRevision)).collection('products').doc(bookId).get(),
+      firestore.collection('configurationRevisions').doc(String(configurationRevision)).get()
+    ]);
+    if (!configurationSnapshot.exists) throw new HttpsError('failed-precondition', 'The published configuration is unavailable.');
+    const product = productSnapshot.data() ?? {};
+    const details = product.bookDetails ?? {};
+    const contentVersion = details.contentVersion ?? product.contentVersion;
+    if (!productSnapshot.exists || product.status !== 'published' || product.typeId !== 'book' ||
+        !Number.isSafeInteger(contentVersion) || contentVersion < 1 || !details.locales?.includes(locale) || details.pdfInAppEnabled === false) {
+      throw new HttpsError('not-found', 'The published book is not available for the selected locale.');
+    }
+    const configuration = configurationSnapshot.get('configuration') ?? {};
+    const freeByCatalogue = details.access === 'free' || details.free === true;
+    const freeAccessAllowed = configuration.accessPolicy?.freeAccess === 'book_catalogue_flag';
+    if (!freeByCatalogue || !freeAccessAllowed) {
+      const entitlements = await userRef.collection('entitlements').where('productId', '==', bookId).limit(20).get();
+      const now = Date.now();
+      const entitlement = entitlements.docs.map(snapshot => snapshot.data()).find(item => {
+        const validFrom = timestampMillis(item.validFrom);
+        const validUntil = timestampMillis(item.validUntil);
+        const acceptedSources = details.access === 'premium' && configuration.accessPolicy?.premiumBooksRequireActiveSubscription === true
+          ? ['subscription', 'admin_grant']
+          : ['book_purchase', 'subscription', 'admin_grant'];
+        return item.state === 'active' && acceptedSources.includes(item.source) &&
+          (validFrom == null || validFrom <= now) && (validUntil == null || validUntil > now);
+      });
+      if (!entitlement) throw new HttpsError('permission-denied', 'A current book entitlement is required.');
+    }
+    const assetId = `${bookId}-${locale}-v${contentVersion}-reader`;
+    const assetPath = `books/${bookId}/v${contentVersion}/${locale}/reader.pdf`;
+    const assetSnapshot = await firestore.collection('books').doc(bookId).collection('assets').doc(assetId).get();
+    const asset = assetSnapshot.data() ?? {};
+    if (!assetSnapshot.exists || asset.type !== 'reader' || asset.reviewStatus !== 'approved' || asset.locale !== locale ||
+        asset.contentVersion !== contentVersion || asset.objectPath !== assetPath || !Number.isSafeInteger(asset.byteLength) ||
+        asset.byteLength < 1 || asset.byteLength > 100 * 1024 * 1024 || typeof asset.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(asset.sha256)) {
+      throw new HttpsError('failed-precondition', 'The approved private reader file is unavailable.');
+    }
+    const file = storage.bucket().file(assetPath);
+    let metadata;
+    try { [metadata] = await file.getMetadata(); }
+    catch { throw new HttpsError('not-found', 'The private reader file has not been uploaded.'); }
+    if (Number(metadata.size) !== asset.byteLength || metadata.contentType !== 'application/pdf' || metadata.metadata?.sha256 !== asset.sha256) {
+      throw new HttpsError('failed-precondition', 'The uploaded reader file does not match its approved asset record.');
+    }
+    const now = Date.now();
+    const expiresAt = now + 5 * 60 * 1000;
+    const [url] = await file.getSignedUrl({ action: 'read', expires: expiresAt, version: 'v4' });
+    await firestore.collection('bookAccessEvents').add({
+      uid, childId, bookId, locale, contentVersion, action: 'resolve_reader',
+      createdAt: FieldValue.serverTimestamp(), expiresAt: new Date(expiresAt)
+    });
+    return { bookId, childId, locale, contentVersion, url, expiresAt: new Date(expiresAt).toISOString(), sha256: asset.sha256, byteLength: asset.byteLength };
   }
 );
 

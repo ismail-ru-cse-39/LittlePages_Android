@@ -218,6 +218,8 @@ function bindEvents() {
     event.currentTarget.reset(); render();
   });
   byId('pageSelect').addEventListener('change', event => { selectedPageId = event.target.value; renderPages(); });
+  byId('previewPageButton').addEventListener('click', previewCurrentPage);
+  byId('closePagePreviewButton').addEventListener('click', () => byId('pagePreviewDialog').close());
   byId('newPageButton').addEventListener('click', () => {
     const number = config.catalog.storePages.length + 1;
     const page = { id: newId('page'), title: { en: `New page ${number}`, bn: `নতুন পৃষ্ঠা ${number}` }, schemaVersion: 1, enabled: true, blocks: [] };
@@ -552,6 +554,36 @@ function renderPages() {
     row.append(controls); blocks.append(row);
   });
   renderBlockEditors(page);
+}
+
+function previewCurrentPage() {
+  const page = selectedPage();
+  if (!page) return;
+  const dialog = byId('pagePreviewDialog');
+  byId('pagePreviewTitle').textContent = page.title.en || 'Untitled page';
+  byId('pagePreviewDescription').textContent = `${page.title.bn || 'শিরোনাম নেই'} · ${page.enabled ? 'Available' : 'Archived'} · local preview`;
+  const root = byId('pagePreviewBlocks'); root.replaceChildren();
+  page.blocks.forEach(block => {
+    const card = document.createElement('section'); card.className = `page-preview-block preview-${block.type}`;
+    const title = block.type === 'editorial_text_v1' ? '' : block.title?.en ?? blockName(block.type);
+    if (title) card.append(text('h3', title));
+    if (block.type === 'editorial_text_v1') card.append(text('p', block.body?.en ?? 'Editorial copy will appear here.'));
+    else if (block.type === 'category_rail_v1') {
+      const selected = new Set(block.categoryIds ?? []);
+      const labels = config.catalog.productCategories.filter(category => category.enabled && (!selected.size || selected.has(category.id))).map(category => category.label.en);
+      card.append(text('p', labels.join(' · ') || 'No enabled categories'));
+    } else if (block.type === 'product_collection_v1') {
+      const store = config.catalog.storefronts.find(item => item.id === block.query?.storefrontId);
+      const items = products.filter(product => product.status === 'published' && (!store || store.productTypeIds.includes(product.typeId))).slice(0, 4);
+      const grid = document.createElement('div'); grid.className = 'page-preview-products';
+      (items.length ? items : []).forEach(product => grid.append(text('span', product.title.en)));
+      if (!items.length) grid.append(text('span', 'No published products to preview'));
+      card.append(grid);
+    } else card.append(text('p', 'Hero content using the selected supported block.'));
+    root.append(card);
+  });
+  if (!page.blocks.length) root.append(text('p', 'This page has no content blocks yet.', 'empty-state'));
+  dialog.showModal();
 }
 
 function renderBlockEditors(page) {
@@ -1253,6 +1285,42 @@ function policyChanges(before, after) {
   return changes;
 }
 
+function validatePolicyDraft() {
+  const errors = [];
+  const offline = config?.offlinePolicy ?? {};
+  const access = config?.accessPolicy ?? {};
+  const privacy = config?.privacyPolicy ?? {};
+  const commerce = config?.physicalCommercePolicy ?? {};
+  const community = config?.communityPolicy ?? {};
+  const whole = (value, minimum, maximum = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(value) && value >= minimum && value <= maximum;
+  if (offline.enabled !== false && offline.enabled !== true) errors.push('Offline reading must be explicitly enabled or disabled.');
+  if (!whole(offline.maximumBooksPerFamily, 0, 10)) errors.push('Offline book cap must be a whole number from 0 to 10.');
+  if (!whole(offline.accessLeaseDays, 1, 30)) errors.push('Offline access lease must be 1–30 days.');
+  if (!whole(offline.onlineRefreshAfterDays, 1, 7) || offline.onlineRefreshAfterDays > offline.accessLeaseDays) errors.push('Offline refresh must be 1–7 days and no longer than the access lease.');
+  if (offline.encryptAppPrivateStorage !== true || offline.removeWhenEntitlementExpires !== true || offline.allowExport !== false) errors.push('Offline files must use encrypted app-private storage, expire with entitlement, and keep export disabled.');
+  if (!['book_catalogue_flag', 'none'].includes(access.freeAccess)) errors.push('Choose a supported free-book access rule.');
+  ['premiumBooksRequireActiveSubscription', 'premiumNarrationRequiresActiveSubscription', 'purchasedBookAccessSurvivesSubscriptionExpiry', 'grantAccessFromClientSuccessScreen'].forEach(key => {
+    if (typeof access[key] !== 'boolean') errors.push(`Access policy ${key} must be explicitly set.`);
+  });
+  if (access.grantAccessFromClientSuccessScreen !== false) errors.push('Client success screens cannot grant access.');
+  ['parentAccountOwnsChildProfiles', 'collectOnlyNicknameAndAgeBandForChildProfile', 'personalizedAdvertising', 'parentCanRequestAccountAndChildDataDeletion', 'requiresOwnerAndLegalReview'].forEach(key => {
+    if (typeof privacy[key] !== 'boolean') errors.push(`Privacy policy ${key} must be explicitly set.`);
+  });
+  if (privacy.deletionRetentionDays !== null && privacy.deletionRetentionDays !== undefined && !whole(privacy.deletionRetentionDays, 0, 3650)) errors.push('Privacy retention must be blank or a whole number from 0 to 3,650 days.');
+  if (typeof commerce.enabled !== 'boolean' || typeof commerce.requireConfirmedStockAndDeliveryQuoteBeforeCheckout !== 'boolean') errors.push('Physical commerce enablement and stock/delivery confirmation must be explicit.');
+  if (!Array.isArray(commerce.availableRegions) || commerce.availableRegions.some(region => !/^[A-Z]{2}$/.test(region)) || new Set(commerce.availableRegions).size !== commerce.availableRegions.length) errors.push('Physical commerce regions must be unique ISO-style two-letter country codes.');
+  if (!Array.isArray(commerce.paymentMethods) || commerce.paymentMethods.some(method => !['bkash', 'visa'].includes(method)) || new Set(commerce.paymentMethods).size !== commerce.paymentMethods.length) errors.push('Physical commerce methods must be unique supported values (bKash or Visa).');
+  if (typeof commerce.showInAppPdfAndPhysicalOptionsWhenBothAvailable !== 'boolean') errors.push('Physical and digital format display must be explicitly set.');
+  if (commerce.cancellationAndRefundRules != null && (typeof commerce.cancellationAndRefundRules !== 'string' || commerce.cancellationAndRefundRules.length > 2000)) errors.push('Cancellation/refund summary must be blank or at most 2,000 characters.');
+  ['parentAccountRequired', 'moderateBeforePublicVisibility', 'prohibitChildContactAndLocationDetails', 'allowUserCreatedGroups', 'reportAndBlockEnabled', 'requiresOwnerReview'].forEach(key => {
+    if (typeof community[key] !== 'boolean') errors.push(`Community policy ${key} must be explicitly set.`);
+  });
+  if (!whole(community.maximumImageBytes, 0, 25 * 1024 * 1024)) errors.push('Community image limit must be a whole number from 0 to 25 MiB.');
+  if (!whole(community.maximumImagesPerPost, 0, 10)) errors.push('Images per post must be a whole number from 0 to 10.');
+  if (community.moderationResponseTargetHours !== null && community.moderationResponseTargetHours !== undefined && !whole(community.moderationResponseTargetHours, 0, 24 * 365)) errors.push('Moderation response target must be blank or a whole number up to one year.');
+  return [...new Set(errors)];
+}
+
 function savePolicyReview() { localStorage.setItem(POLICY_REVIEW_KEY, JSON.stringify(policyReview)); }
 
 function recordPolicyEvent(action, details = {}) {
@@ -1270,6 +1338,7 @@ function previewPolicyImpact() {
 
 function approvePolicyPreview() {
   if (!policyReview.impactPreview) return;
+  if (validatePolicyDraft().length) { renderPolicyReview(); return; }
   if (!window.confirm('Record a local preview approval? This does not approve or publish the real policy.')) return;
   policyReview.approval = 'preview_approved';
   recordPolicyEvent('marked local preview approved');
@@ -1277,6 +1346,7 @@ function approvePolicyPreview() {
 }
 
 function savePolicyRevision(note = 'Saved policy preview revision') {
+  if (validatePolicyDraft().length) { renderPolicyReview(); return; }
   const policy = policySnapshot();
   if (!policyChanges(policyReview.baseline, policy).length) return;
   policyReview.history.unshift({ id: newId('policy-revision'), revision: (policyReview.history[0]?.revision ?? 0) + 1, createdAt: new Date().toISOString(), note, approval: policyReview.approval, policy });
@@ -1302,7 +1372,12 @@ function renderPolicyReview() {
   const status = byId('policyApprovalStatus');
   if (!status) return;
   status.textContent = policyReview.approval === 'preview_approved' ? 'Local preview marked approved · real owner approval is still required' : 'Pending owner review';
-  byId('approvePolicyPreviewButton').disabled = !policyReview.impactPreview || policyReview.approval === 'preview_approved';
+  const validationErrors = validatePolicyDraft();
+  byId('approvePolicyPreviewButton').disabled = !policyReview.impactPreview || policyReview.approval === 'preview_approved' || validationErrors.length > 0;
+  byId('savePolicyRevisionButton').disabled = !policyChanges(policyReview.baseline, policySnapshot()).length || validationErrors.length > 0;
+  const validation = byId('policyValidation'); validation.replaceChildren();
+  if (validationErrors.length) validationErrors.forEach(error => validation.append(text('div', error, 'validation-error')));
+  else validation.append(text('div', 'Policy values pass local checks. Owner/legal review and server-side validation are still required.', 'empty-state'));
   const impact = byId('policyImpactPreview'); impact.replaceChildren();
   const changes = policyReview.impactPreview ?? policyChanges(policyReview.baseline, policySnapshot());
   if (!policyReview.impactPreview) impact.append(text('div', 'Preview policy impact to compare the current draft with its saved baseline.', 'empty-state'));
@@ -1416,6 +1491,7 @@ function renderPolicies() {
 
 function validateDraft() {
   const errors = [];
+  errors.push(...validatePolicyDraft());
   const unique = (items, label) => {
     const ids = items.map(item => item.id);
     if (new Set(ids).size !== ids.length) errors.push(`${label} IDs must be unique.`);
