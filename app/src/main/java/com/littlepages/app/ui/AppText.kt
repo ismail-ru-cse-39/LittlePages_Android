@@ -46,7 +46,8 @@ private val banglaCopy = mapOf(
     "Parent account" to "অভিভাবক অ্যাকাউন্ট", "Family" to "পরিবার", "Your account" to "আপনার অ্যাকাউন্ট", "Child profiles" to "শিশুর প্রোফাইল", "LittlePages Premium" to "LittlePages প্রিমিয়াম",
     "Language" to "ভাষা", "Offline books" to "অফলাইন বই", "Orders" to "অর্ডার", "Help and support" to "সহায়তা",
     "Add a child profile" to "শিশুর প্রোফাইল যোগ করুন", "Edit child profile" to "শিশুর প্রোফাইল সম্পাদনা", "Nickname" to "ডাকনাম", "Age range" to "বয়স",
-    "Save preview" to "নমুনা সংরক্ষণ করুন", "Cancel" to "বাতিল", "Not available yet" to "এখনো চালু হয়নি", "OK" to "ঠিক আছে",
+    "Save preview" to "নমুনা সংরক্ষণ করুন", "Save profile" to "প্রোফাইল সংরক্ষণ করুন", "Save review" to "রিভিউ সংরক্ষণ করুন", "Delete" to "মুছুন", "Cancel" to "বাতিল", "Not available yet" to "এখনো চালু হয়নি", "OK" to "ঠিক আছে",
+    "Opening the approved book…" to "অনুমোদিত বই খোলা হচ্ছে…",
     "Help and support" to "সহায়তা", "Your email" to "আপনার ইমেইল", "How can we help?" to "কীভাবে সাহায্য করতে পারি?", "Send support request" to "সহায়তার অনুরোধ পাঠান",
     "Choose a format" to "বইয়ের ধরন বাছুন", "Delivery address" to "ডেলিভারির ঠিকানা", "Full name" to "পুরো নাম", "Address and area" to "ঠিকানা ও এলাকা",
     "Payment" to "পেমেন্ট", "Continue to payment" to "পেমেন্টে এগিয়ে যান", "Narration settings" to "পাঠের শব্দ সেটিংস", "Voice" to "কণ্ঠ", "Reading speed" to "পড়ার গতি", "Done" to "সম্পন্ন"

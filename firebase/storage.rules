@@ -1,7 +1,7 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // Private book delivery and parent uploads require trusted backend authorization.
+    // Direct client access stays closed. Callables issue short-lived signed URLs for private book and community uploads.
     match /{allPaths=**} {
       allow read, write: if false;
     }

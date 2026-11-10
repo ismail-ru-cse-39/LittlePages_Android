@@ -723,7 +723,17 @@ async function stageBookAssets(event) {
       const digest = await window.crypto.subtle.digest('SHA-256', bytes);
       const checksum = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('');
       const assetId = `${bookId}-${locale}-v${contentVersion}-${type}`;
-      records.push({ assetId, bookId, type, locale, contentVersion, fileName: file.name, mimeType: file.type || 'application/json', byteLength: file.size, sha256: checksum, validatedAt: new Date().toISOString(), uploadState: 'metadata_only', rights: { holder: rightsHolder, licenseReference, expiresAt: rightsExpiresAt, confirmed: rightsConfirmed, timingReviewed } });
+      let uploadState = 'metadata_only';
+      if (form.elements.uploadToPrivateStorage.checked) {
+        if (!firebaseClient?.auth.currentUser) throw new Error('Sign in through the Firebase admin connection before uploading private files.');
+        const contentType = type === 'timings' ? 'application/json' : file.type;
+        const prepared = await callAdmin(firebaseClient, 'createBookAssetUploadUrl', { bookId, locale, contentVersion, type, contentType, byteLength: file.size, sha256: checksum, rights: { holder: rightsHolder, licenseReference, expiresAt: rightsExpiresAt } });
+        const upload = await fetch(prepared.url, { method: 'PUT', headers: { 'Content-Type': prepared.contentType }, body: new Blob([bytes], { type: prepared.contentType }) });
+        if (!upload.ok) throw new Error(`Private upload failed (${upload.status}). The storage bucket must allow this admin origin.`);
+        const finalized = await callAdmin(firebaseClient, 'finalizeBookAsset', { bookId, assetId: prepared.assetId });
+        uploadState = finalized.reviewStatus;
+      }
+      records.push({ assetId, bookId, type, locale, contentVersion, fileName: file.name, mimeType: file.type || 'application/json', byteLength: file.size, sha256: checksum, validatedAt: new Date().toISOString(), uploadState, rights: { holder: rightsHolder, licenseReference, expiresAt: rightsExpiresAt, confirmed: rightsConfirmed, timingReviewed } });
     }
     records.forEach(record => {
       const previous = bookAssetManifest.find(existing => existing.assetId === record.assetId) ?? null;
@@ -783,7 +793,22 @@ function renderBookAssets() {
     const row = document.createElement('article'); row.className = 'promotion-row';
     const product = products.find(item => item.id === asset.bookId);
     row.append(text('strong', `${asset.type} · ${product?.title.en ?? asset.bookId} · ${asset.locale.toUpperCase()} v${asset.contentVersion}`));
-    row.append(text('span', `${asset.fileName} · ${(asset.byteLength / (1024 * 1024)).toFixed(2)} MiB · SHA-256 ${asset.sha256.slice(0, 16)}… · not uploaded`, 'promotion-meta'));
+    row.append(text('span', `${asset.fileName} · ${(asset.byteLength / (1024 * 1024)).toFixed(2)} MiB · SHA-256 ${asset.sha256.slice(0, 16)}… · ${asset.uploadState || 'metadata_only'}`, 'promotion-meta'));
+    if (asset.uploadState === 'pending_review') {
+      const approve = text('button', 'Approve for reading', 'button button-soft'); approve.type = 'button';
+      approve.addEventListener('click', async () => {
+        try {
+          if (!firebaseClient?.auth.currentUser) throw new Error('Sign in as a publisher or administrator to approve an asset.');
+          await callAdmin(firebaseClient, 'reviewBookAsset', { bookId: asset.bookId, assetId: asset.assetId, decision: 'approved', reason: 'Staff approved the uploaded checksum and declared rights.' });
+          asset.uploadState = 'approved';
+          localStorage.setItem(BOOK_ASSET_STORAGE_KEY, JSON.stringify(bookAssetManifest));
+          recordBookAssetHistory(asset.assetId, 'approved', null, asset);
+          localStorage.setItem(BOOK_ASSET_HISTORY_KEY, JSON.stringify(bookAssetHistory));
+          renderBookAssets();
+        } catch (error) { window.alert(error.message); }
+      });
+      row.append(approve);
+    }
     row.append(text('span', `Rights: ${asset.rights?.holder ?? 'not recorded'} · ref ${asset.rights?.licenseReference ?? 'missing'} · expiry ${asset.rights?.expiresAt ?? 'not specified'} · ${asset.rights?.confirmed ? 'confirmed by preview user' : 'unconfirmed'}`, 'promotion-meta'));
     const remove = text('button', 'Remove metadata', 'remove-button'); remove.type = 'button'; remove.addEventListener('click', () => { bookAssetManifest = bookAssetManifest.filter(item => item.assetId !== asset.assetId); recordBookAssetHistory(asset.assetId, 'removed', asset, null); localStorage.setItem(BOOK_ASSET_STORAGE_KEY, JSON.stringify(bookAssetManifest)); localStorage.setItem(BOOK_ASSET_HISTORY_KEY, JSON.stringify(bookAssetHistory)); renderBookAssets(); }); row.append(remove);
     root.append(row);

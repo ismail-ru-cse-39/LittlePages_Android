@@ -4,7 +4,10 @@ import { initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import { defineSecret } from 'firebase-functions/params';
-import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
+import { createChildId, validateCategoryId, validateChildProfile, validateCommunityText, validateDeletionReason, validateReadingProgress, validateReview, MAX_CHILD_PROFILES } from './account-domain.mjs';
+import { describeBookAsset, rightsDeclaration } from './asset-domain.mjs';
+import { planPaymentTransition, verifyPaymentWebhook } from './payment-domain.mjs';
 import {
   bestAutomaticDiscount,
   chooseBestSingleDiscount,
@@ -28,13 +31,14 @@ initializeApp();
 const firestore = getFirestore();
 const storage = getStorage();
 const discountHmacKey = defineSecret('LITTLEPAGES_DISCOUNT_HMAC_KEY');
+const paymentWebhookSecret = defineSecret('LITTLEPAGES_PAYMENT_WEBHOOK_SECRET');
 const FUNCTION_REGION = 'asia-south1';
 const MAX_CODE_BATCH = 100;
 const ROLE_CAPABILITIES = Object.freeze({
-  catalog_editor: new Set(['edit_configuration', 'validate_configuration', 'create_codes']),
-  publisher: new Set(['edit_configuration', 'validate_configuration', 'publish_configuration', 'rollback_configuration', 'create_codes', 'publish_codes']),
+  catalog_editor: new Set(['edit_configuration', 'validate_configuration', 'create_codes', 'manage_assets']),
+  publisher: new Set(['edit_configuration', 'validate_configuration', 'publish_configuration', 'rollback_configuration', 'create_codes', 'publish_codes', 'manage_assets', 'approve_assets']),
   moderator: new Set(['moderate_community']),
-  administrator: new Set(['edit_configuration', 'validate_configuration', 'approve_configuration', 'publish_configuration', 'rollback_configuration', 'create_codes', 'approve_codes', 'publish_codes', 'manage_staff', 'moderate_community'])
+  administrator: new Set(['edit_configuration', 'validate_configuration', 'approve_configuration', 'publish_configuration', 'rollback_configuration', 'create_codes', 'approve_codes', 'publish_codes', 'manage_staff', 'moderate_community', 'manage_assets', 'approve_assets'])
 });
 
 function requireSignedIn(request) {
@@ -1218,6 +1222,7 @@ export const reserveDiscountedOrder = onCall(
           discountMinor,
           totalMinor: finalPriceMinor,
           lineItems: [{ productId, variantId, quantity: 1, unitPriceMinor: variant.priceMinor, currency: 'BDT' }],
+          grantsDigitalAccess: variantId === 'in-app',
           appliedDiscount: chosenCode ? { kind: 'code', campaignId: codeRecord.campaignId, codeId: codeRecord.id, codeHash, discountMinor } : chosen?.promotion ? { kind: 'automatic', promotionId: chosen.promotion.id, discountMinor } : null,
           discountReservationState: chosenCode ? 'reserved' : null,
           createdAt: FieldValue.serverTimestamp(),
@@ -1236,6 +1241,467 @@ export const reserveDiscountedOrder = onCall(
     } catch (error) {
       if (error instanceof HttpsError) throw error;
       throw new HttpsError('aborted', 'The order could not be reserved. Retry with the same idempotency key.', { cause: error?.message });
+    }
+  }
+);
+
+async function requireActiveParent(uid) {
+  const userRef = firestore.collection('users').doc(uid);
+  const snapshot = await userRef.get();
+  if (snapshot.exists && snapshot.get('state') !== 'active') {
+    throw new HttpsError('failed-precondition', 'This parent account is not active.');
+  }
+  if (!snapshot.exists) {
+    await userRef.set({ state: 'active', createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+  }
+  return userRef;
+}
+
+export const saveChildProfile = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const nickname = typeof request.data?.nickname === 'string' ? request.data.nickname.trim() : '';
+    const ageBand = request.data?.ageBand;
+    const requestedId = request.data?.childId ?? null;
+    const validationError = validateChildProfile({ nickname, ageBand, childId: requestedId });
+    if (validationError) throw new HttpsError('invalid-argument', validationError);
+    const userRef = await requireActiveParent(uid);
+    const childId = requestedId ?? createChildId();
+    const childRef = userRef.collection('children').doc(childId);
+    const saved = await firestore.runTransaction(async transaction => {
+      const [userSnapshot, childSnapshot, childrenSnapshot] = await Promise.all([
+        transaction.get(userRef), transaction.get(childRef), transaction.get(userRef.collection('children'))
+      ]);
+      if (userSnapshot.exists && userSnapshot.get('state') !== 'active') throw new HttpsError('failed-precondition', 'This parent account is not active.');
+      if (!userSnapshot.exists) transaction.set(userRef, { state: 'active', createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp() });
+      if (!childSnapshot.exists && childrenSnapshot.size >= MAX_CHILD_PROFILES) {
+        throw new HttpsError('failed-precondition', 'This family already has the maximum number of child profiles.');
+      }
+      transaction.set(childRef, {
+        nickname, ageBand,
+        createdAt: childSnapshot.get('createdAt') ?? FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+      return { childId, nickname, ageBand };
+    });
+    return saved;
+  }
+);
+
+export const deleteChildProfile = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const childId = request.data?.childId;
+    if (validateChildProfile({ nickname: 'Child', ageBand: '5 years old', childId })) {
+      throw new HttpsError('invalid-argument', 'The child profile ID is invalid.');
+    }
+    const userRef = await requireActiveParent(uid);
+    const childRef = userRef.collection('children').doc(childId);
+    const progress = await childRef.collection('progress').get();
+    if (progress.size > 100) throw new HttpsError('failed-precondition', 'This profile has too much reading data to delete in one request.');
+    const batch = firestore.batch();
+    progress.docs.forEach(snapshot => batch.delete(snapshot.ref));
+    batch.delete(childRef);
+    await batch.commit();
+    return { childId, deleted: true };
+  }
+);
+
+export const saveReadingProgress = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 20 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const childId = request.data?.childId;
+    const bookId = request.data?.bookId;
+    const page = request.data?.page;
+    const bookmarks = request.data?.bookmarks ?? [];
+    if (validateChildProfile({ nickname: 'Child', ageBand: '5 years old', childId })) throw new HttpsError('invalid-argument', 'The child profile ID is invalid.');
+    const progressError = validateReadingProgress({ bookId, page, bookmarks });
+    if (progressError) throw new HttpsError('invalid-argument', progressError);
+    const userRef = await requireActiveParent(uid);
+    const childRef = userRef.collection('children').doc(childId);
+    const progressRef = childRef.collection('progress').doc(bookId);
+    const now = Date.now();
+    const clientUpdated = Number(request.data?.updatedAt);
+    const updatedAtMillis = Number.isFinite(clientUpdated) && Math.abs(now - clientUpdated) <= 5 * 60 * 1000 ? clientUpdated : now;
+    const saved = await firestore.runTransaction(async transaction => {
+      const [childSnapshot, progressSnapshot] = await Promise.all([transaction.get(childRef), transaction.get(progressRef)]);
+      if (!childSnapshot.exists) throw new HttpsError('permission-denied', 'The child profile does not belong to this account.');
+      const existingMillis = timestampMillis(progressSnapshot.get('updatedAt'));
+      if (progressSnapshot.exists && existingMillis != null && existingMillis > updatedAtMillis) {
+        return { bookId, page: progressSnapshot.get('page'), bookmarks: progressSnapshot.get('bookmarks') ?? [], updatedAt: existingMillis, kept: 'server' };
+      }
+      transaction.set(progressRef, {
+        page, bookmarks, updatedAt: new Date(updatedAtMillis), childId, bookId
+      });
+      return { bookId, page, bookmarks, updatedAt: updatedAtMillis, kept: 'client' };
+    });
+    return saved;
+  }
+);
+
+export const requestAccountDeletion = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 5 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const reasonError = validateDeletionReason(request.data?.reason);
+    if (reasonError) throw new HttpsError('invalid-argument', reasonError);
+    await requireActiveParent(uid);
+    const requestRef = firestore.collection('privacyRequests').doc();
+    await requestRef.set({
+      uid, type: 'account_deletion', status: 'requested',
+      reason: typeof request.data?.reason === 'string' ? request.data.reason.trim() : '',
+      createdAt: FieldValue.serverTimestamp()
+    });
+    return { requestId: requestRef.id, status: 'requested' };
+  }
+);
+
+export const exportFamilyData = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 5 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const userRef = await requireActiveParent(uid);
+    const children = await userRef.collection('children').get();
+    const profiles = [];
+    for (const child of children.docs) {
+      const progress = await child.ref.collection('progress').limit(100).get();
+      profiles.push({
+        id: child.id,
+        nickname: child.get('nickname') ?? '',
+        ageBand: child.get('ageBand') ?? '',
+        progress: progress.docs.map(item => ({ bookId: item.id, page: item.get('page') ?? 1, bookmarks: item.get('bookmarks') ?? [] }))
+      });
+    }
+    return { uid, profiles };
+  }
+);
+
+function communityId(prefix) {
+  return `${prefix}-${createHash('sha256').update(`${Date.now()}:${Math.random()}`).digest('hex').slice(0, 20)}`;
+}
+
+export const createCommunityPost = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const bodyError = validateCommunityText(request.data?.body, 'Post');
+    const categoryError = validateCategoryId(request.data?.categoryId);
+    if (bodyError || categoryError) throw new HttpsError('invalid-argument', bodyError || categoryError);
+    await requireActiveParent(uid);
+    let imageId = null;
+    if (request.data?.imageId != null) {
+      imageId = requiredString(request.data.imageId, 'imageId', 80);
+      const image = await firestore.collection('communityImages').doc(imageId).get();
+      if (!image.exists || image.get('uid') !== uid || image.get('status') !== 'ready') {
+        throw new HttpsError('failed-precondition', 'Attach an image only after its upload has been checked.');
+      }
+    }
+    const postRef = firestore.collection('posts').doc(communityId('post'));
+    await postRef.set({
+      uid, body: request.data.body.trim(), categoryId: request.data.categoryId, imageId,
+      moderationState: 'pending', createdAt: FieldValue.serverTimestamp()
+    });
+    return { id: postRef.id, moderationState: 'pending' };
+  }
+);
+
+export const createCommunityComment = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const postId = requiredString(request.data?.postId, 'postId', 80);
+    const bodyError = validateCommunityText(request.data?.body, 'Comment');
+    if (postId.includes('/') || bodyError) throw new HttpsError('invalid-argument', bodyError || 'Choose a valid post.');
+    await requireActiveParent(uid);
+    const post = await firestore.collection('posts').doc(postId).get();
+    if (!post.exists || !['visible', 'pending'].includes(post.get('moderationState')) || (post.get('moderationState') === 'pending' && post.get('uid') !== uid)) {
+      throw new HttpsError('not-found', 'That post is not available for replies.');
+    }
+    const commentRef = firestore.collection('comments').doc(communityId('comment'));
+    await commentRef.set({
+      uid, postId, body: request.data.body.trim(), moderationState: 'pending', createdAt: FieldValue.serverTimestamp()
+    });
+    return { id: commentRef.id, moderationState: 'pending' };
+  }
+);
+
+export const listCommunityPosts = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    const uid = requireSignedIn(request);
+    await requireActiveParent(uid);
+    const categoryId = request.data?.categoryId ?? null;
+    if (categoryId != null && validateCategoryId(categoryId)) throw new HttpsError('invalid-argument', 'Choose a supported topic.');
+    const [visible, own] = await Promise.all([
+      firestore.collection('posts').where('moderationState', '==', 'visible').limit(50).get(),
+      firestore.collection('posts').where('uid', '==', uid).limit(50).get()
+    ]);
+    const posts = new Map();
+    [...visible.docs, ...own.docs].forEach(snapshot => {
+      if (snapshot.get('moderationState') === 'removed') return;
+      if (categoryId && snapshot.get('categoryId') !== categoryId) return;
+      posts.set(snapshot.id, {
+        id: snapshot.id, body: snapshot.get('body') ?? '', categoryId: snapshot.get('categoryId') ?? '',
+        authorUid: snapshot.get('uid'), imageId: snapshot.get('imageId') ?? null,
+        moderationState: snapshot.get('moderationState') ?? 'pending'
+      });
+    });
+    return { posts: [...posts.values()] };
+  }
+);
+
+export const createReview = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const reviewError = validateReview({ bookId: request.data?.bookId, rating: request.data?.rating, body: request.data?.body });
+    if (reviewError) throw new HttpsError('invalid-argument', reviewError);
+    await requireActiveParent(uid);
+    const reviewRef = firestore.collection('reviews').doc(communityId('review'));
+    await reviewRef.set({
+      uid, bookId: request.data.bookId, rating: request.data.rating, body: request.data.body.trim(),
+      moderationState: 'pending', createdAt: FieldValue.serverTimestamp()
+    });
+    return { id: reviewRef.id, moderationState: 'pending' };
+  }
+);
+
+export const reviewCommunitySubmission = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 5 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const targetType = request.data?.targetType;
+    const targetId = requiredString(request.data?.targetId, 'targetId', 128);
+    const action = request.data?.action;
+    const reason = requiredString(request.data?.reason, 'reason', 1000);
+    if (!Object.hasOwn(MODERATABLE_COLLECTIONS, targetType) || targetId.includes('/') || !['approve', 'hide', 'remove'].includes(action)) {
+      throw new HttpsError('invalid-argument', 'Choose a supported submission and action.');
+    }
+    const roleRef = firestore.collection('adminRoles').doc(uid);
+    const itemRef = firestore.collection(MODERATABLE_COLLECTIONS[targetType]).doc(targetId);
+    const auditRef = firestore.collection('adminAuditEvents').doc();
+    const moderationState = action === 'approve' ? 'visible' : action === 'hide' ? 'hidden' : 'removed';
+    await firestore.runTransaction(async transaction => {
+      const [roleSnapshot, itemSnapshot] = await Promise.all([transaction.get(roleRef), transaction.get(itemRef)]);
+      assertRoleCapability(roleSnapshot, 'moderate_community');
+      if (!itemSnapshot.exists) throw new HttpsError('not-found', 'The submission no longer exists.');
+      transaction.update(itemRef, { moderationState, moderatedBy: uid, moderatedAt: FieldValue.serverTimestamp() });
+      transaction.create(auditRef, auditRecord({ actorUid: uid, action: 'review_community_submission', targetId: `${targetType}:${targetId}`, details: { moderationState, reason } }));
+    });
+    return { targetType, targetId, moderationState };
+  }
+);
+
+const COMMUNITY_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const MAX_COMMUNITY_IMAGE_BYTES = 5 * 1024 * 1024;
+
+export const createCommunityImageUploadUrl = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const contentType = request.data?.contentType;
+    const byteLength = request.data?.byteLength;
+    if (!COMMUNITY_IMAGE_TYPES.has(contentType) || !Number.isSafeInteger(byteLength) || byteLength < 1 || byteLength > MAX_COMMUNITY_IMAGE_BYTES) {
+      throw new HttpsError('invalid-argument', 'Choose a JPEG, PNG, or WebP image up to 5 MB.');
+    }
+    await requireActiveParent(uid);
+    const imageId = communityId('image');
+    const objectPath = `community/${uid}/${imageId}`;
+    const imageRef = firestore.collection('communityImages').doc(imageId);
+    await imageRef.set({ uid, objectPath, contentType, byteLength, status: 'pending_upload', createdAt: FieldValue.serverTimestamp() });
+    const file = storage.bucket().file(objectPath);
+    const expiresAt = Date.now() + 15 * 60 * 1000;
+    const [url] = await file.getSignedUrl({ action: 'write', expires: expiresAt, version: 'v4', contentType });
+    return { imageId, url, expiresAt: new Date(expiresAt).toISOString(), contentType };
+  }
+);
+
+export const finalizeCommunityImage = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const imageId = requiredString(request.data?.imageId, 'imageId', 80);
+    const imageRef = firestore.collection('communityImages').doc(imageId);
+    const image = await imageRef.get();
+    if (!image.exists || image.get('uid') !== uid || image.get('status') === 'ready') {
+      throw new HttpsError(image.get('status') === 'ready' ? 'already-exists' : 'permission-denied', 'This image upload is not available.');
+    }
+    const file = storage.bucket().file(image.get('objectPath'));
+    let metadata;
+    try { [metadata] = await file.getMetadata(); }
+    catch { throw new HttpsError('not-found', 'The image has not been uploaded.'); }
+    if (metadata.contentType !== image.get('contentType') || Number(metadata.size) !== image.get('byteLength') || Number(metadata.size) > MAX_COMMUNITY_IMAGE_BYTES) {
+      throw new HttpsError('failed-precondition', 'The uploaded image does not match the declared type or size.');
+    }
+    await imageRef.set({ status: 'ready', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    return { imageId, status: 'ready' };
+  }
+);
+
+export const createBookAssetUploadUrl = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 5 },
+  async request => {
+    const uid = requireSignedIn(request);
+    assertRoleCapability(await firestore.collection('adminRoles').doc(uid).get(), 'manage_assets');
+    let described;
+    let rights;
+    try {
+      described = describeBookAsset(request.data ?? {});
+      rights = rightsDeclaration(request.data?.rights ?? {});
+    } catch (error) { throw new HttpsError('invalid-argument', error.message); }
+    const assetRef = firestore.collection('books').doc(described.bookId).collection('assets').doc(described.assetId);
+    const existing = await assetRef.get();
+    if (existing.exists && existing.get('reviewStatus') === 'approved') {
+      throw new HttpsError('failed-precondition', 'An approved asset cannot be replaced. Publish a new content version.');
+    }
+    await assetRef.set({
+      ...described, rights, reviewStatus: 'pending_upload', uploadedBy: uid, updatedAt: FieldValue.serverTimestamp(),
+      createdAt: existing.get('createdAt') ?? FieldValue.serverTimestamp()
+    });
+    const file = storage.bucket().file(described.objectPath);
+    const expiresAt = Date.now() + 15 * 60 * 1000;
+    const [url] = await file.getSignedUrl({ action: 'write', expires: expiresAt, version: 'v4', contentType: described.contentType });
+    return { ...described, url, expiresAt: new Date(expiresAt).toISOString(), reviewStatus: 'pending_upload' };
+  }
+);
+
+export const finalizeBookAsset = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 5, memory: '512MiB' },
+  async request => {
+    const uid = requireSignedIn(request);
+    assertRoleCapability(await firestore.collection('adminRoles').doc(uid).get(), 'manage_assets');
+    const bookId = requiredString(request.data?.bookId, 'bookId', 80);
+    const assetId = requiredString(request.data?.assetId, 'assetId', 160);
+    if (bookId.includes('/') || assetId.includes('/')) throw new HttpsError('invalid-argument', 'The asset reference is invalid.');
+    const assetRef = firestore.collection('books').doc(bookId).collection('assets').doc(assetId);
+    const assetSnapshot = await assetRef.get();
+    const asset = assetSnapshot.data();
+    if (!assetSnapshot.exists || asset.reviewStatus === 'approved') throw new HttpsError('failed-precondition', 'This asset is not waiting for an upload check.');
+    const file = storage.bucket().file(asset.objectPath);
+    let metadata;
+    try { [metadata] = await file.getMetadata(); }
+    catch { throw new HttpsError('not-found', 'The private file has not been uploaded.'); }
+    if (Number(metadata.size) !== asset.byteLength || metadata.contentType !== asset.contentType) {
+      throw new HttpsError('failed-precondition', 'The uploaded file does not match its declared size or type.');
+    }
+    const digest = createHash('sha256');
+    await new Promise((resolve, reject) => {
+      file.createReadStream().on('data', chunk => digest.update(chunk)).on('end', resolve).on('error', reject);
+    });
+    if (digest.digest('hex') !== asset.sha256) throw new HttpsError('failed-precondition', 'The uploaded file failed its checksum.');
+    await file.setMetadata({ metadata: { sha256: asset.sha256 } });
+    await assetRef.set({ reviewStatus: 'pending_review', finalizedBy: uid, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    return { assetId, reviewStatus: 'pending_review' };
+  }
+);
+
+export const reviewBookAsset = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 5 },
+  async request => {
+    const uid = requireSignedIn(request);
+    const bookId = requiredString(request.data?.bookId, 'bookId', 80);
+    const assetId = requiredString(request.data?.assetId, 'assetId', 160);
+    const decision = request.data?.decision;
+    const reason = requiredString(request.data?.reason, 'reason', 1000);
+    if (!['approved', 'rejected'].includes(decision) || bookId.includes('/') || assetId.includes('/')) {
+      throw new HttpsError('invalid-argument', 'Choose a valid asset and approval decision.');
+    }
+    const roleRef = firestore.collection('adminRoles').doc(uid);
+    const assetRef = firestore.collection('books').doc(bookId).collection('assets').doc(assetId);
+    const auditRef = firestore.collection('adminAuditEvents').doc();
+    await firestore.runTransaction(async transaction => {
+      const [roleSnapshot, assetSnapshot] = await Promise.all([transaction.get(roleRef), transaction.get(assetRef)]);
+      assertRoleCapability(roleSnapshot, 'approve_assets');
+      if (!assetSnapshot.exists || assetSnapshot.get('reviewStatus') !== 'pending_review') {
+        throw new HttpsError('failed-precondition', 'Only an uploaded asset that is waiting for review can be approved or rejected.');
+      }
+      transaction.set(assetRef, { reviewStatus: decision, reviewedBy: uid, reviewReason: reason, reviewedAt: FieldValue.serverTimestamp() }, { merge: true });
+      transaction.create(auditRef, auditRecord({ actorUid: uid, action: 'review_book_asset', targetId: assetId, details: { bookId, decision, reason } }));
+    });
+    return { assetId, reviewStatus: decision };
+  }
+);
+
+async function applyVerifiedPayment(event) {
+  const orderRef = firestore.collection('orders').doc(event.orderId);
+  const eventRef = firestore.collection('paymentEvents').doc(createHash('sha256').update(`${event.provider}:${event.providerEventId}`).digest('hex'));
+  const now = Date.now();
+  return firestore.runTransaction(async transaction => {
+    const existingEvent = await transaction.get(eventRef);
+    const orderSnapshot = await transaction.get(orderRef);
+    const order = orderSnapshot.exists ? orderSnapshot.data() : null;
+    if (existingEvent.exists) {
+      return { status: 200, body: { orderId: event.orderId, status: order?.status ?? 'unknown', duplicate: true } };
+    }
+    const plan = planPaymentTransition(order, event, now);
+    if (plan.action === 'reject') return { status: plan.status, body: { error: plan.reason } };
+    if (plan.action === 'noop') return { status: 200, body: { orderId: event.orderId, status: plan.orderStatus, paymentStatus: plan.paymentStatus, duplicate: true } };
+    const purchaseRef = firestore.collection('customerPurchaseState').doc(order.customerUid);
+    const purchaseSnapshot = await transaction.get(purchaseRef);
+    const discount = order.appliedDiscount?.kind === 'code' ? order.appliedDiscount : null;
+    const codeRefs = discount && plan.reservation !== 'none' ? {
+      campaign: firestore.collection('discountCodeCampaigns').doc(discount.campaignId),
+      usage: firestore.collection('discountCodeUsage').doc(discount.codeHash),
+      customer: firestore.collection('discountCampaignUsage').doc(discount.campaignId).collection('customers').doc(createHash('sha256').update(order.customerUid).digest('hex'))
+    } : null;
+    if (codeRefs) {
+      await transaction.get(codeRefs.campaign);
+      await transaction.get(codeRefs.usage);
+      await transaction.get(codeRefs.customer);
+    }
+    const entitlementRef = firestore.collection('users').doc(order.customerUid).collection('entitlements').doc(orderRef.id);
+    if (plan.entitlement === 'revoke') await transaction.get(entitlementRef);
+    transaction.create(eventRef, { ...event, orderId: orderRef.id, appliedAt: FieldValue.serverTimestamp(), plan: plan.orderStatus });
+    transaction.set(orderRef, {
+      status: plan.orderStatus,
+      paymentStatus: plan.paymentStatus,
+      settledProviderEventId: `${event.provider}:${event.providerEventId}`,
+      discountReservationState: plan.reservation === 'settle' ? 'settled' : plan.reservation === 'release' ? 'released' : order.discountReservationState ?? null,
+      fulfillmentState: plan.fulfillment,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+    if (codeRefs && plan.reservation === 'release') {
+      transaction.set(codeRefs.campaign, { reservedRedemptionCount: FieldValue.increment(-1) }, { merge: true });
+      transaction.set(codeRefs.usage, { reservedCount: FieldValue.increment(-1) }, { merge: true });
+      transaction.set(codeRefs.customer, { reservedCount: FieldValue.increment(-1) }, { merge: true });
+    }
+    if (codeRefs && plan.reservation === 'settle') {
+      transaction.set(codeRefs.campaign, { reservedRedemptionCount: FieldValue.increment(-1), redemptionCount: FieldValue.increment(1) }, { merge: true });
+      transaction.set(codeRefs.usage, { reservedCount: FieldValue.increment(-1), redemptionCount: FieldValue.increment(1) }, { merge: true });
+      transaction.set(codeRefs.customer, { reservedCount: FieldValue.increment(-1), redemptionCount: FieldValue.increment(1) }, { merge: true });
+    }
+    const productId = order.lineItems?.[0]?.productId;
+    if (plan.entitlement === 'grant' && typeof productId === 'string') {
+      transaction.set(entitlementRef, {
+        productId, state: 'active', source: 'book_purchase', validFrom: new Date(now), validUntil: null,
+        orderId: orderRef.id, provider: event.provider, providerEventId: event.providerEventId, updatedAt: FieldValue.serverTimestamp()
+      });
+      transaction.set(purchaseRef, { verifiedPurchaseCount: FieldValue.increment(1) }, { merge: true });
+    }
+    if (plan.entitlement === 'revoke') {
+      transaction.set(entitlementRef, { state: 'revoked', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      if (Number(purchaseSnapshot.get('verifiedPurchaseCount') ?? 0) > 0) {
+        transaction.set(purchaseRef, { verifiedPurchaseCount: FieldValue.increment(-1) }, { merge: true });
+      }
+    }
+    return { status: 200, body: { orderId: orderRef.id, status: plan.orderStatus, paymentStatus: plan.paymentStatus, fulfillment: plan.fulfillment } };
+  });
+}
+
+export const paymentWebhook = onRequest(
+  { region: FUNCTION_REGION, secrets: [paymentWebhookSecret], maxInstances: 10 },
+  async (request, response) => {
+    if (request.method !== 'POST') { response.status(405).send('POST only'); return; }
+    const verdict = verifyPaymentWebhook(request.rawBody?.toString('utf8') ?? '', request.get('x-littlepages-signature') ?? '', paymentWebhookSecret.value());
+    if (!verdict.ok) { response.status(verdict.status).json({ error: verdict.reason }); return; }
+    try {
+      const result = await applyVerifiedPayment(verdict.event);
+      response.status(result.status).json(result.body);
+    } catch {
+      response.status(500).json({ error: 'The payment event could not be applied.' });
     }
   }
 );

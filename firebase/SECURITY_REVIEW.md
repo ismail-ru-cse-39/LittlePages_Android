@@ -2,7 +2,7 @@
 
 ## Current state
 
-`firestore.rules` now permits unauthenticated reads only for `publicConfiguration/current`, numeric immutable `configurationRevisions`, and product and automatic-promotion documents beneath numeric `catalogRevisions`. Client writes and all other reads remain denied. This narrow public read surface supports guest storefront browsing; it is safe only if the trusted publisher places public data in these immutable revision paths and never puts drafts, discount-code digests, customer assignments, redemptions, or private assets there. `storage.rules` still deny all client access. These rules have not been emulator-tested or deployed, and Firestore reads will continue to fail under the currently deployed deny-all rules until you deploy the reviewed file.
+`firestore.rules` permits unauthenticated reads only for `publicConfiguration/current`, numeric immutable `configurationRevisions`, and product and automatic-promotion documents beneath numeric `catalogRevisions`. A signed-in parent can read their own child profiles, reading progress, and privacy requests. Client writes remain denied; profile, progress, community, asset, and payment changes go through App Check protected callables or the signed payment webhook. `storage.rules` still deny all direct client access. Private book and community files are written only with short-lived signed URLs issued by those callables. These rules have not been emulator-tested or deployed, and Firestore reads will continue to fail under the currently deployed deny-all rules until you deploy the reviewed file.
 
 ## Required authorization boundaries
 

@@ -12,8 +12,13 @@ class ReaderProgressStore(context: Context) {
 
     fun page(childId: String, bookId: String): Int = preferences.getInt(pageKey(childId, bookId), 1).coerceAtLeast(1)
 
-    fun savePage(childId: String, bookId: String, page: Int) {
-        preferences.edit().putInt(pageKey(childId, bookId), page.coerceAtLeast(1)).apply()
+    fun savePage(childId: String, bookId: String, page: Int): Long {
+        val updatedAt = System.currentTimeMillis()
+        preferences.edit()
+            .putInt(pageKey(childId, bookId), page.coerceAtLeast(1))
+            .putLong(updatedKey(childId, bookId), updatedAt)
+            .apply()
+        return updatedAt
     }
 
     fun isBookmarked(childId: String, bookId: String, page: Int): Boolean = page in bookmarkedPages(childId, bookId)
@@ -21,8 +26,29 @@ class ReaderProgressStore(context: Context) {
     fun toggleBookmark(childId: String, bookId: String, page: Int): Boolean {
         val pages = bookmarkedPages(childId, bookId).toMutableSet()
         val added = if (page in pages) pages.remove(page) else pages.add(page)
-        preferences.edit().putStringSet(bookmarkKey(childId, bookId), pages.map(Int::toString).toSet()).apply()
+        preferences.edit()
+            .putStringSet(bookmarkKey(childId, bookId), pages.map(Int::toString).toSet())
+            .putLong(updatedKey(childId, bookId), System.currentTimeMillis())
+            .apply()
         return added
+    }
+
+    fun bookmarks(childId: String, bookId: String): List<Int> = bookmarkedPages(childId, bookId).sorted()
+
+    fun updatedAt(childId: String, bookId: String): Long = preferences.getLong(updatedKey(childId, bookId), 0L)
+
+    fun replaceIfNewer(childId: String, bookId: String, page: Int, bookmarks: List<Int>, updatedAt: Long): Boolean {
+        if (updatedAt <= this.updatedAt(childId, bookId)) return false
+        preferences.edit()
+            .putInt(pageKey(childId, bookId), page.coerceAtLeast(1))
+            .putStringSet(bookmarkKey(childId, bookId), bookmarks.map(Int::toString).toSet())
+            .putLong(updatedKey(childId, bookId), updatedAt)
+            .apply()
+        return true
+    }
+
+    fun clearAll() {
+        preferences.edit().clear().apply()
     }
 
     private fun bookmarkedPages(childId: String, bookId: String): Set<Int> = preferences
@@ -33,6 +59,7 @@ class ReaderProgressStore(context: Context) {
 
     private fun pageKey(childId: String, bookId: String) = "page:$childId:$bookId"
     private fun bookmarkKey(childId: String, bookId: String) = "bookmarks:$childId:$bookId"
+    private fun updatedKey(childId: String, bookId: String) = "updated:$childId:$bookId"
 
     private fun migrateLegacyBookTitles() {
         val idsByTitle = mapOf(

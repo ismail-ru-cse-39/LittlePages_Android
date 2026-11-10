@@ -30,6 +30,17 @@ service cloud.firestore {
     match /users/{uid}/children/{childId} {
       allow get, list: if request.auth != null && request.auth.uid == uid;
       allow create, update, delete: if false;
+
+      match /progress/{bookId} {
+        allow get, list: if request.auth != null && request.auth.uid == uid;
+        allow create, update, delete: if false;
+      }
+    }
+
+    match /privacyRequests/{requestId} {
+      allow get: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow list: if request.auth != null && resource.data.uid == request.auth.uid;
+      allow create, update, delete: if false;
     }
 
     // Staff, drafts, payments, entitlements, moderation, and all other user data stays closed.

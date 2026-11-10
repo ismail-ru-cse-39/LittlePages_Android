@@ -3,7 +3,8 @@ import { assertValidPromotion } from './discount-domain.mjs';
 
 const ID = /^[a-z0-9_-]{2,60}$/;
 const TYPE_RENDERERS = new Set(['book_v1', 'physical_good_v1']);
-const BLOCK_TYPES = new Set(['hero_v1', 'category_rail_v1', 'product_collection_v1', 'editorial_text_v1']);
+export const SUPPORTED_BLOCK_TYPES = Object.freeze(['hero_v1', 'category_rail_v1', 'product_collection_v1', 'editorial_text_v1']);
+const BLOCK_TYPES = new Set(SUPPORTED_BLOCK_TYPES);
 const REQUIRED_POLICY_KEYS = ['offlinePolicy', 'accessPolicy', 'privacyPolicy', 'physicalCommercePolicy', 'communityPolicy'];
 
 export const MAX_DRAFT_BYTES = 700 * 1024;
