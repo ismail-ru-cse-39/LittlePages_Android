@@ -9,6 +9,7 @@ import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
 import { createChildId, validateCategoryId, validateChildProfile, validateCommunityText, validateDeletionReason, validateReadingProgress, validateReview, MAX_CHILD_PROFILES } from './account-domain.mjs';
 import { describeBookAsset, rightsDeclaration } from './asset-domain.mjs';
 import { planDeliveryQuote, planFulfillmentUpdate, planPhysicalCheckout } from './fulfillment-domain.mjs';
+import { parseNarrationTimings } from './narration-domain.mjs';
 import { operationFailure } from './operation-log.mjs';
 import { planPaymentTransition, planSubscriptionExpiry, verifyPaymentWebhook } from './payment-domain.mjs';
 import {
@@ -1764,10 +1765,21 @@ export const finalizeBookAsset = onCall(
       throw new HttpsError('failed-precondition', 'The uploaded file does not match its declared size or type.');
     }
     const digest = createHash('sha256');
+    const timingChunks = asset.type === 'timings' ? [] : null;
     await new Promise((resolve, reject) => {
-      file.createReadStream().on('data', chunk => digest.update(chunk)).on('end', resolve).on('error', reject);
+      file.createReadStream().on('data', chunk => {
+        digest.update(chunk);
+        if (timingChunks) timingChunks.push(chunk);
+      }).on('end', resolve).on('error', reject);
     });
     if (digest.digest('hex') !== asset.sha256) throw new HttpsError('failed-precondition', 'The uploaded file failed its checksum.');
+    if (timingChunks) {
+      let parsed;
+      try { parsed = JSON.parse(Buffer.concat(timingChunks).toString('utf8')); }
+      catch { throw new HttpsError('failed-precondition', 'Word timing file must contain valid JSON.'); }
+      try { parseNarrationTimings(parsed); }
+      catch (error) { throw new HttpsError('failed-precondition', error.message); }
+    }
     await file.setMetadata({ metadata: { sha256: asset.sha256 } });
     await assetRef.set({ reviewStatus: 'pending_review', finalizedBy: uid, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
     return { assetId, reviewStatus: 'pending_review' };

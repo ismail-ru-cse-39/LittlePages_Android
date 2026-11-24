@@ -773,14 +773,28 @@ function validAudioSignature(buffer, mimeType) {
 function validateTimingJson(serialized) {
   let document;
   try { document = JSON.parse(serialized); } catch { throw new Error('Word timing file must contain valid JSON.'); }
-  if (!Array.isArray(document.words) || !document.words.length) throw new Error('Word timing JSON needs a non-empty words array.');
-  let previousStart = -1;
-  let previousEnd = -1;
-  for (const word of document.words) {
-    if (!Number.isFinite(word.startMs) || !Number.isFinite(word.endMs) || word.startMs < 0 || word.endMs <= word.startMs || word.startMs < previousStart || word.startMs < previousEnd) {
-      throw new Error('Word timings must have ordered, non-overlapping startMs/endMs values.');
+  if (!document || typeof document !== 'object' || Array.isArray(document)) throw new Error('Narration timings must be an object.');
+  if (document.schemaVersion !== 1) throw new Error('Narration timings schema is unsupported.');
+  if (!Array.isArray(document.pages) || document.pages.length < 1 || document.pages.length > 500) throw new Error('Narration timings need 1–500 pages.');
+  const seen = new Set();
+  for (const page of document.pages) {
+    if (!page || typeof page !== 'object' || Array.isArray(page)) throw new Error('A narration page is invalid.');
+    if (!Number.isSafeInteger(page.page) || page.page < 1) throw new Error('Narration page number is invalid.');
+    if (seen.has(page.page)) throw new Error('Narration page numbers must be unique.');
+    seen.add(page.page);
+    if (typeof page.text !== 'string' || page.text.length < 1 || page.text.length > 20000) throw new Error('Narration page text is invalid.');
+    if (!Array.isArray(page.words) || page.words.length < 1 || page.words.length > 2000) throw new Error('Narration word timings are invalid.');
+    let previousEnd = -1;
+    for (const word of page.words) {
+      if (!word || typeof word !== 'object' || Array.isArray(word)) throw new Error('A narration word timing is invalid.');
+      if (!Number.isSafeInteger(word.start) || !Number.isSafeInteger(word.end) || word.start < 0 || word.end <= word.start || word.end > page.text.length) {
+        throw new Error('A narration word range does not match the page text.');
+      }
+      if (!Number.isSafeInteger(word.startMs) || !Number.isSafeInteger(word.endMs) || word.startMs < 0 || word.endMs <= word.startMs || word.startMs < previousEnd || word.endMs > 60 * 60 * 1000) {
+        throw new Error('Narration word times must move forward within one hour.');
+      }
+      previousEnd = word.endMs;
     }
-    previousStart = word.startMs; previousEnd = word.endMs;
   }
 }
 

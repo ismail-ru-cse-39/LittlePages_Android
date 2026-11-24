@@ -154,6 +154,7 @@ test('approved narration timings reject overlapping or out-of-range words', () =
   assert.equal(parsed.pages[0].words.length, 2);
   assert.throws(() => parseNarrationTimings({ schemaVersion: 1, pages: [{ page: 1, text: 'Hello', words: [{ start: 0, end: 5, startMs: 0, endMs: 10 }, { start: 0, end: 5, startMs: 5, endMs: 20 }] }] }), /move forward/);
   assert.throws(() => parseNarrationTimings({ schemaVersion: 1, pages: [{ page: 1, text: 'Hello', words: [{ start: 0, end: 8, startMs: 0, endMs: 10 }] }] }), /range/);
+  assert.throws(() => parseNarrationTimings({ words: [{ startMs: 0, endMs: 10 }] }), /schema/);
   const failure = operationFailure('paymentWebhook', { code: 'aborted', message: 'x'.repeat(400) });
   assert.equal(failure.event, 'littlepages.operation_failed');
   assert.equal(failure.message.length, 300);
