@@ -61,6 +61,25 @@ internal class TrustedFamilyRemote(app: FirebaseApp) {
         }
     }
 
+    suspend fun createComment(postId: String, body: String): RemoteCommunityPost {
+        val data = call("createCommunityComment", mapOf("postId" to postId, "body" to body))
+        return RemoteCommunityPost(data.requiredString("id"), body, postId, null, data.requiredString("moderationState"))
+    }
+
+    suspend fun listComments(postId: String): List<RemoteCommunityPost> {
+        val comments = call("listCommunityComments", mapOf("postId" to postId))["comments"] as? List<*> ?: emptyList<Any>()
+        return comments.mapNotNull { item ->
+            val record = item as? Map<*, *> ?: return@mapNotNull null
+            RemoteCommunityPost(
+                id = record["id"] as? String ?: return@mapNotNull null,
+                body = record["body"] as? String ?: "",
+                categoryId = record["postId"] as? String ?: postId,
+                authorUid = record["authorUid"] as? String,
+                moderationState = record["moderationState"] as? String ?: "pending"
+            )
+        }
+    }
+
     suspend fun createPost(body: String, categoryId: String, imageId: String?): RemoteCommunityPost {
         val payload = mutableMapOf<String, Any>("body" to body, "categoryId" to categoryId)
         if (!imageId.isNullOrBlank()) payload["imageId"] = imageId

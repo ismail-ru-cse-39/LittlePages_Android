@@ -61,6 +61,24 @@ internal class FirebaseOfflineBookAccessRemote(
         )
     }
 
+    suspend fun resolveNarrationAccess(bookId: String, childId: String, locale: String): NarrationAccess {
+        val result = functions.getHttpsCallable("resolveNarrationAccess")
+            .call(mapOf("bookId" to bookId, "childId" to childId, "locale" to locale))
+            .awaitCallable()
+        val data = result.data.asStringMap()
+        val audioUrl = data["audioUrl"] as? String
+        return NarrationAccess(
+            timingsUrl = URI(data.requiredString("timingsUrl")),
+            timingsExpiresAt = Instant.parse(data.requiredString("timingsExpiresAt")),
+            timingsSha256 = data.requiredString("timingsSha256"),
+            timingsByteLength = data.requiredLong("timingsByteLength"),
+            audioUrl = audioUrl?.let(::URI),
+            audioSha256 = data["audioSha256"] as? String,
+            audioByteLength = (data["audioByteLength"] as? Number)?.toLong(),
+            audioContentType = data["audioContentType"] as? String
+        )
+    }
+
     suspend fun revokeGrant(bookId: String) {
         functions.getHttpsCallable("revokeOfflineBookGrant")
             .call(mapOf("bookId" to bookId))
@@ -77,6 +95,17 @@ internal data class OfflineBookGrant(
     val refreshAfter: Instant,
     val expiresAt: Instant,
     val entitlementExpiresAt: Instant?
+)
+
+internal data class NarrationAccess(
+    val timingsUrl: URI,
+    val timingsExpiresAt: Instant,
+    val timingsSha256: String,
+    val timingsByteLength: Long,
+    val audioUrl: URI?,
+    val audioSha256: String?,
+    val audioByteLength: Long?,
+    val audioContentType: String?
 )
 
 internal data class OfflineBookDownload(

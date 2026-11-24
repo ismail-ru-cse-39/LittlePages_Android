@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
-const EVENT_TYPES = new Set(['payment_succeeded', 'payment_failed', 'refunded', 'chargeback']);
+const EVENT_TYPES = new Set(['payment_succeeded', 'payment_failed', 'refunded', 'chargeback', 'subscription_expired']);
 const EVENT_ID = /^[A-Za-z0-9_-]{8,80}$/;
 const ORDER_ID = /^[a-f0-9]{64}$/;
 const ACCEPTED_WINDOW_MILLIS = 7 * 24 * 60 * 60 * 1000;
@@ -32,6 +32,12 @@ export function validatePaymentEvent(event) {
   if (event.provider === 'client') return 'A client success screen cannot report payment.';
   if (typeof event.providerEventId !== 'string' || !EVENT_ID.test(event.providerEventId)) return 'Payment event ID is invalid.';
   if (!EVENT_TYPES.has(event.type)) return 'Payment event type is unsupported.';
+  if (event.type === 'subscription_expired') {
+    if (typeof event.subscriptionId !== 'string' || !EVENT_ID.test(event.subscriptionId)) return 'Subscription ID is invalid.';
+    if (event.orderId != null || event.amountMinor != null) return 'Subscription expiry cannot carry an order or amount.';
+    if (typeof event.occurredAt !== 'string' || !Number.isFinite(Date.parse(event.occurredAt))) return 'Payment time is invalid.';
+    return null;
+  }
   if (typeof event.orderId !== 'string' || !ORDER_ID.test(event.orderId)) return 'Order ID is invalid.';
   if (!Number.isSafeInteger(event.amountMinor) || event.amountMinor < 1) return 'Payment amount is invalid.';
   if (event.currency !== 'BDT') return 'Payment currency must be BDT.';
@@ -65,7 +71,8 @@ export function planPaymentTransition(order, event, now) {
       paymentStatus: 'succeeded',
       reservation: order.discountReservationState === 'reserved' ? 'settle' : 'none',
       entitlement: order.grantsDigitalAccess === true ? 'grant' : 'none',
-      fulfillment: order.grantsDigitalAccess === true ? 'digital_access_updated' : 'physical_pending_owner_fulfillment'
+      fulfillment: order.grantsDigitalAccess === true ? 'digital_access_updated' : 'paid_awaiting_fulfillment',
+      stock: 'none'
     };
   }
   if (event.type === 'payment_failed') {
@@ -77,7 +84,8 @@ export function planPaymentTransition(order, event, now) {
       paymentStatus: 'failed',
       reservation: order.discountReservationState === 'reserved' ? 'release' : 'none',
       entitlement: 'none',
-      fulfillment: 'none'
+      fulfillment: 'none',
+      stock: order.fulfillmentType === 'physical' ? 'release' : 'none'
     };
   }
   if (event.type === 'refunded' || event.type === 'chargeback') {
@@ -90,8 +98,29 @@ export function planPaymentTransition(order, event, now) {
       paymentStatus: refunded ? 'refunded' : 'chargeback',
       reservation: 'none',
       entitlement: 'revoke',
-      fulfillment: order.grantsDigitalAccess === true ? 'digital_access_revoked' : 'physical_pending_owner_fulfillment'
+      fulfillment: order.grantsDigitalAccess === true ? 'digital_access_revoked' : 'refund_pending_owner',
+      stock: 'none'
     };
   }
   return { action: 'reject', status: 400, reason: 'Payment event type is unsupported.' };
+}
+
+/** Expire a subscription without touching book-purchase entitlements. */
+export function planSubscriptionExpiry(subscription, event, now) {
+  if (!subscription) return { action: 'reject', status: 404, reason: 'Subscription was not found.' };
+  if (subscription.provider !== event.provider) return { action: 'reject', status: 409, reason: 'Subscription provider does not match the event.' };
+  if (typeof subscription.uid !== 'string' || !subscription.uid || subscription.uid.includes('/')) {
+    return { action: 'reject', status: 409, reason: 'Stored subscription account is invalid.' };
+  }
+  if (typeof subscription.productId !== 'string' || !/^[A-Za-z0-9_-]{2,80}$/.test(subscription.productId)) {
+    return { action: 'reject', status: 409, reason: 'Stored subscription product is invalid.' };
+  }
+  const occurred = Date.parse(event.occurredAt);
+  if (!Number.isFinite(occurred) || occurred > now + 5 * 60 * 1000 || now - occurred > ACCEPTED_WINDOW_MILLIS) {
+    return { action: 'reject', status: 400, reason: 'Subscription event time is outside the accepted window.' };
+  }
+  const eventKey = `${event.provider}:${event.providerEventId}`;
+  if (subscription.state === 'expired' && subscription.settledProviderEventId === eventKey) return { action: 'noop', status: 200 };
+  if (subscription.state !== 'active') return { action: 'reject', status: 409, reason: 'Only an active subscription can expire.' };
+  return { action: 'expire', status: 200, uid: subscription.uid, productId: subscription.productId };
 }

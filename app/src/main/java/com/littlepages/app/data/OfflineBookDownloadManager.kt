@@ -118,6 +118,41 @@ internal class OfflineBookDownloadManager(
         File(appContext.cacheDir, READER_CACHE).deleteRecursively()
     }
 
+    suspend fun loadApprovedNarration(bookId: String, childId: String, locale: String): ApprovedNarrationLoad =
+        withContext(Dispatchers.IO) {
+            val access = runCatching { remote.resolveNarrationAccess(bookId, childId, locale) }.getOrElse { return@withContext ApprovedNarrationLoad.Missing }
+            if (access.timingsExpiresAt <= java.time.Instant.now() || access.timingsByteLength !in 1..(5L * 1024 * 1024) ||
+                !access.timingsSha256.matches(Regex("^[a-f0-9]{64}$"))
+            ) {
+                return@withContext ApprovedNarrationLoad.Invalid("The trusted service returned invalid narration timing")
+            }
+            val bytes = runCatching {
+                downloadExact(access.timingsUrl, access.timingsByteLength, access.timingsSha256, "application/json")
+            }.getOrElse { error -> return@withContext ApprovedNarrationLoad.Invalid(error.message ?: "The timing file could not be downloaded") }
+            val script = parseNarrationTimings(bytes) ?: return@withContext ApprovedNarrationLoad.Invalid("The approved timing file could not be read.")
+            val audio = access.audioUrl?.let { url ->
+                val length = access.audioByteLength
+                val sha = access.audioSha256
+                val type = access.audioContentType
+                if (length == null || sha == null || type == null || length !in 1..(100L * 1024 * 1024) || !sha.matches(Regex("^[a-f0-9]{64}$"))) {
+                    return@withContext ApprovedNarrationLoad.Invalid("The trusted service returned invalid narration audio")
+                }
+                val directory = File(appContext.cacheDir, NARRATION_CACHE).apply { mkdirs() }
+                directory.listFiles()?.forEach { it.delete() }
+                val file = File(directory, "narration")
+                runCatching { downloadToFile(url, file, length, sha, type) }.getOrElse { error ->
+                    File(appContext.cacheDir, NARRATION_CACHE).deleteRecursively()
+                    return@withContext ApprovedNarrationLoad.Invalid(error.message ?: "The narration audio could not be downloaded")
+                }
+                file
+            }
+            ApprovedNarrationLoad.Ready(script, audio)
+        }
+
+    fun releaseNarrationFile() {
+        File(appContext.cacheDir, NARRATION_CACHE).deleteRecursively()
+    }
+
     suspend fun remove(accountId: String, bookId: String) = withContext(Dispatchers.IO) {
         vault.remove(accountId, bookId)
         remote.revokeGrant(bookId)
@@ -152,6 +187,55 @@ internal class OfflineBookDownloadManager(
         }
         if (pageCount < 1) throw IOException("The book PDF has no pages")
         return PreparedReadingFile(file, pageCount, source)
+    }
+
+    private fun downloadExact(url: URI, byteLength: Long, sha256: String, contentType: String): ByteArray {
+        val file = File.createTempFile("littlepages-asset", ".bin", appContext.cacheDir)
+        try {
+            downloadToFile(url, file, byteLength, sha256, contentType)
+            if (file.length() > 5L * 1024 * 1024) throw IOException("The timing file is too large")
+            return file.readBytes()
+        } finally {
+            file.delete()
+        }
+    }
+
+    private fun downloadToFile(url: URI, destination: File, byteLength: Long, sha256: String, contentType: String) {
+        val host = url.host?.lowercase()
+        if (url.scheme != "https" || host !in setOf("storage.googleapis.com", "firebasestorage.googleapis.com") || url.userInfo != null || url.fragment != null) {
+            throw IOException("The trusted service returned an invalid download URL")
+        }
+        val connection = (url.toURL().openConnection() as? HttpURLConnection) ?: throw IOException("Unsupported download connection")
+        try {
+            connection.connectTimeout = CONNECT_TIMEOUT_MILLIS
+            connection.readTimeout = READ_TIMEOUT_MILLIS
+            connection.instanceFollowRedirects = false
+            connection.useCaches = false
+            connection.requestMethod = "GET"
+            if (connection.responseCode != HttpURLConnection.HTTP_OK) throw IOException("Download failed with HTTP ${connection.responseCode}")
+            val receivedType = connection.contentType?.substringBefore(';')?.trim()?.lowercase()
+            if (receivedType != contentType) throw IOException("The downloaded file type does not match the approved asset")
+            val digest = MessageDigest.getInstance("SHA-256")
+            destination.outputStream().use { output ->
+                connection.inputStream.use { input ->
+                    val buffer = ByteArray(8192)
+                    var total = 0L
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        if (total > byteLength) throw IOException("The downloaded file exceeds its approved size")
+                        digest.update(buffer, 0, count)
+                        output.write(buffer, 0, count)
+                    }
+                    if (total != byteLength || digest.digest().joinToString("") { "%02x".format(it) } != sha256) {
+                        throw IOException("The downloaded file does not match its approved checksum")
+                    }
+                }
+            }
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private fun fetchVerifiedPdf(download: OfflineBookDownload, consumer: (InputStream) -> Unit) {
@@ -242,7 +326,14 @@ internal class OfflineBookDownloadManager(
         const val READ_TIMEOUT_MILLIS = 45_000
         const val GRANT_INDEX = "offline_grant_index_v1"
         const val READER_CACHE = "authorized-reader"
+        const val NARRATION_CACHE = "approved-narration"
     }
+}
+
+internal sealed class ApprovedNarrationLoad {
+    data class Ready(val script: ApprovedNarrationScript, val audioFile: File?) : ApprovedNarrationLoad()
+    data object Missing : ApprovedNarrationLoad()
+    data class Invalid(val reason: String) : ApprovedNarrationLoad()
 }
 
 internal data class PreparedReadingFile(val file: File, val pageCount: Int, val source: String)

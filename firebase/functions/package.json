@@ -7,7 +7,7 @@
   },
   "main": "index.mjs",
   "scripts": {
-    "check": "node --check index.mjs && node --check discount-domain.mjs && node --check publishing-domain.mjs && node --check account-domain.mjs && node --check asset-domain.mjs && node --check payment-domain.mjs && node --test test/*.test.mjs"
+    "check": "node --check index.mjs && node --check discount-domain.mjs && node --check publishing-domain.mjs && node --check account-domain.mjs && node --check asset-domain.mjs && node --check payment-domain.mjs && node --check fulfillment-domain.mjs && node --check narration-domain.mjs && node --check operation-log.mjs && node --test test/*.test.mjs"
   },
   "dependencies": {
     "firebase-admin": "^13.4.0",

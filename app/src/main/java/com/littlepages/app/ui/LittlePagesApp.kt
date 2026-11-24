@@ -70,6 +70,9 @@ import com.littlepages.app.data.OfflineBookChildProfile
 import com.littlepages.app.data.AndroidNarrationEngine
 import com.littlepages.app.data.NarrationAudioFocus
 import com.littlepages.app.data.NarrationState
+import com.littlepages.app.data.ApprovedNarrationLoad
+import com.littlepages.app.data.ApprovedNarrationPage
+import com.littlepages.app.data.ApprovedNarrationScript
 import com.littlepages.app.data.PreparedReadingFile
 import com.littlepages.app.data.SamplePdfRenderer
 import com.littlepages.app.data.TrustedFamilyRemote
@@ -114,6 +117,7 @@ import com.littlepages.app.ui.theme.PagesSpacing
 import com.littlepages.app.ui.theme.PagesSizes
 import com.littlepages.app.ui.theme.PagesShapes
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -414,6 +418,11 @@ fun LittlePagesApp() {
     var readingError by remember { mutableStateOf<String?>(null) }
     var readingBusy by remember { mutableStateOf(false) }
     var serverCommunityPosts by remember { mutableStateOf<List<CommunityEntry>>(emptyList()) }
+    var discussionComments by remember { mutableStateOf<List<CommunityEntry>>(emptyList()) }
+    var selectedDiscussionId by remember { mutableStateOf<String?>(null) }
+    var approvedNarration by remember { mutableStateOf<ApprovedNarrationScript?>(null) }
+    var approvedNarrationAudio by remember { mutableStateOf<java.io.File?>(null) }
+    var narrationMessage by remember { mutableStateOf<String?>(null) }
     var currentPage by remember(selectedBook.id, activeChildId) { mutableIntStateOf(progressStore.page(activeChildId, selectedBook.id).coerceIn(1, selectedBook.pageCount)) }
     var bookmarked by remember(selectedBook.id, activeChildId, currentPage) { mutableStateOf(progressStore.isBookmarked(activeChildId, selectedBook.id, currentPage)) }
     val communityPosts = remember { mutableStateListOf<CommunityEntry>() }
@@ -424,10 +433,65 @@ fun LittlePagesApp() {
     val page = stack.last()
     LaunchedEffect(page, isAuthenticatedUser, familyRemote) {
         val remote = familyRemote ?: return@LaunchedEffect
-        if (page != Page.Community || !isAuthenticatedUser) return@LaunchedEffect
+        if ((page != Page.Community && page != Page.Group) || !isAuthenticatedUser) return@LaunchedEffect
         runCatching { remote.listPosts() }.onSuccess { posts ->
             serverCommunityPosts = posts.map { post ->
                 CommunityEntry(post.body, category = post.categoryId, author = if (post.authorUid == firebaseUser?.uid) "You" else "Parent", time = if (post.moderationState == "visible") "Visible" else "Waiting for review", id = post.id, authorUid = post.authorUid, moderationState = post.moderationState)
+            }
+        }
+    }
+    LaunchedEffect(page, serverCommunityPosts) {
+        if (page == Page.Group && selectedDiscussionId == null) {
+            selectedDiscussionId = serverCommunityPosts.firstOrNull { it.category == "discussions" && it.id != null }?.id
+        }
+    }
+    LaunchedEffect(page, selectedDiscussionId, isAuthenticatedUser, familyRemote) {
+        val remote = familyRemote
+        val postId = selectedDiscussionId
+        if ((page != Page.Community && page != Page.Group) || remote == null || postId == null || !isAuthenticatedUser) return@LaunchedEffect
+        runCatching { remote.listComments(postId) }.onSuccess { comments ->
+            discussionComments = comments.map { comment ->
+                CommunityEntry(comment.body, category = "discussions", author = if (comment.authorUid == firebaseUser?.uid) "You" else "Parent", time = if (comment.moderationState == "visible") "Visible" else "Waiting for review", id = comment.id, authorUid = comment.authorUid, moderationState = comment.moderationState)
+            }
+        }
+    }
+    LaunchedEffect(page, authorizedReaderBookId, activeChildId, selectedBook.id, ownedOfflineChildren, selectedLanguage) {
+        val manager = offlineDownloadManager
+        val authorizedListen = page == Page.Listen && authorizedReaderBookId == selectedBook.id && isAuthenticatedUser
+        if (!authorizedListen || manager == null) {
+            if (page != Page.Listen) {
+                approvedNarration = null
+                approvedNarrationAudio = null
+                narrationMessage = null
+                manager?.releaseNarrationFile()
+            }
+            return@LaunchedEffect
+        }
+        val child = ownedOfflineChildren.firstOrNull { it.id == activeChildId } ?: ownedOfflineChildren.firstOrNull()
+        if (child == null) {
+            approvedNarration = null
+            approvedNarrationAudio = null
+            narrationMessage = "Save a child profile before playing approved narration."
+            return@LaunchedEffect
+        }
+        narrationMessage = "Opening approved narration…"
+        approvedNarration = null
+        approvedNarrationAudio = null
+        when (val loaded = manager.loadApprovedNarration(selectedBook.id, child.id, if (selectedLanguage == "bn") "bn" else "en")) {
+            is ApprovedNarrationLoad.Ready -> {
+                approvedNarration = loaded.script
+                approvedNarrationAudio = loaded.audioFile
+                narrationMessage = null
+            }
+            ApprovedNarrationLoad.Missing -> {
+                approvedNarration = null
+                approvedNarrationAudio = null
+                narrationMessage = "Approved narration is not available for this book yet."
+            }
+            is ApprovedNarrationLoad.Invalid -> {
+                approvedNarration = null
+                approvedNarrationAudio = null
+                narrationMessage = loaded.reason
             }
         }
     }
@@ -457,6 +521,19 @@ fun LittlePagesApp() {
     fun go(next: Page) { stack.add(next) }
     fun back() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
     fun showNotice(title: String, message: String) { noticeTitle = title; unavailableNotice = message }
+    fun sendComment(postId: String, body: String) {
+        val remote = familyRemote
+        if (!isAuthenticatedUser || remote == null) {
+            showNotice("Reply not sent", "Sign in to reply to a stored post.")
+            return
+        }
+        coroutineScope.launch {
+            runCatching { remote.createComment(postId, body) }.onSuccess { saved ->
+                discussionComments = listOf(CommunityEntry(body, category = "discussions", time = "Waiting for review", id = saved.id, moderationState = saved.moderationState)) + discussionComments
+                showNotice("Reply sent", "The reply is waiting for review.")
+            }.onFailure { error -> showNotice("Reply not sent", error.message ?: "Try again when you are online.") }
+        }
+    }
     fun syncProgress(childId: String, bookId: String) {
         val remote = familyRemote ?: return
         if (!isAuthenticatedUser || !childId.startsWith("child-")) return
@@ -836,11 +913,11 @@ fun LittlePagesApp() {
                 Page.BookDetails -> BookDetailsScreen(book = selectedBook, categories = managedConfiguration.bookCategories, saved = selectedBook.id in savedBooks, premiumUnlocked = premium, onPremiumRequired = { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else premiumPrompt = true }, onSave = { if (guestMode) unavailableNotice = "Create a parent account to save books." else if (selectedBook.id in savedBooks) savedBooks.remove(selectedBook.id) else savedBooks.add(selectedBook.id) }, onBack = ::back, onRead = { if (selectedBook.premiumOnly && !premium) { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else premiumPrompt = true } else { authorizedReaderBookId = null; go(Page.Reader) } }, onListen = { if (guestMode) unavailableNotice = "Create a parent account to use Premium listening." else openPremiumFeature() }, onReviews = { go(Page.Reviews) }, onOrder = { if (guestMode) unavailableNotice = "Create a parent account to order books." else go(Page.Checkout) }, onRecovery = { recoveryType = "book"; go(Page.Recovery) })
                 Page.PublishedProductDetails -> selectedPublishedProduct?.let { product -> PublishedProductDetailsScreen(product = product, productTypes = managedConfiguration.productTypes, categories = managedConfiguration.productCategories.ifEmpty { managedConfiguration.bookCategories }, promotions = publishedPromotions, offlineSaved = offlineSavedByProductId[product.id] == true, offlineBusy = product.id in offlineOperations, onSaveOffline = { requestSavePublishedBookOffline(product) }, onRefreshOffline = { requestSavePublishedBookOffline(product) }, onRemoveOffline = { removePublishedBookOffline(product) }, onRead = { openAuthorizedBook(product) }, onBack = ::back, onUnavailable = { title, message -> showNotice(title, message) }) } ?: back()
                 Page.Reader -> ReaderScreen(book = selectedBook, mode = if (authorizedReaderBookId == selectedBook.id) "PDF" else readerMode, page = currentPage, bookmarked = bookmarked, authorized = authorizedReaderBookId == selectedBook.id, authorizedFile = preparedReading?.takeIf { authorizedReaderBookId == selectedBook.id }?.file, authorizedPageCount = preparedReading?.takeIf { authorizedReaderBookId == selectedBook.id }?.pageCount ?: 0, authorizedSource = preparedReading?.takeIf { authorizedReaderBookId == selectedBook.id }?.source, authorizedError = readingError, authorizedLoading = readingBusy && authorizedReaderBookId == selectedBook.id, onBookmark = { bookmarked = progressStore.toggleBookmark(activeChildId, selectedBook.id, currentPage); syncProgress(activeChildId, selectedBook.id) }, onPage = { next -> currentPage = next; progressStore.savePage(activeChildId, selectedBook.id, next); syncProgress(activeChildId, selectedBook.id) }, onMode = { if (authorizedReaderBookId != selectedBook.id) readerMode = it }, onBack = ::back, onListen = ::openPremiumFeature, onPremium = { premiumPrompt = true }, renderAuthorizedPage = { file, pageNumber -> offlineDownloadManager?.renderPreparedPage(file, pageNumber) ?: error("Reader unavailable") })
-                Page.Listen -> ListenScreen(book = selectedBook, page = currentPage, autoplay = autoplay, onAutoplay = { autoplay = it }, onPageAdvance = { if (currentPage < selectedBook.pageCount) { currentPage += 1; progressStore.savePage(activeChildId, selectedBook.id, currentPage) } }, onBack = ::back)
+                Page.Listen -> ListenScreen(book = selectedBook, page = currentPage, autoplay = autoplay, onAutoplay = { autoplay = it }, onPageAdvance = { if (currentPage < selectedBook.pageCount) { currentPage += 1; progressStore.savePage(activeChildId, selectedBook.id, currentPage) } }, onBack = ::back, approvedPage = if (authorizedReaderBookId == selectedBook.id) approvedNarration?.page(currentPage) else null, approvedAudio = if (authorizedReaderBookId == selectedBook.id) approvedNarrationAudio else null, narrationNotice = if (authorizedReaderBookId != selectedBook.id) null else if (approvedNarration?.page(currentPage) != null) null else narrationMessage ?: if (approvedNarration != null) "This page has no approved timing." else "Opening approved narration…")
                 Page.ListenPreview -> ListenScreen(book = selectedBook, page = currentPage, autoplay = false, onAutoplay = {}, onPageAdvance = {}, onBack = ::back, previewOnly = true)
-                Page.Community -> CommunityScreen(posts = serverCommunityPosts + communityPosts, categories = managedConfiguration.communityCategories, blockedAuthors = blockedCommunityAuthors, onBlockAuthor = { if (it !in blockedCommunityAuthors) blockedCommunityAuthors.add(it) }, onReport = { entry -> val remote = familyRemote; val id = entry.id; if (remote == null || id == null || !isAuthenticatedUser) showNotice("Report not sent", "Sample posts stay on this device. Sign in to report a stored post.") else coroutineScope.launch { runCatching { remote.report("post", id, "This post does not follow the community guidelines.") }.onSuccess { showNotice("Report sent", "The report was recorded for a moderator.") }.onFailure { error -> showNotice("Report not sent", error.message ?: "Try again when you are online.") } } }, onGroup = { if (guestMode) unavailableNotice = "Create a parent account to join a group." else go(Page.Group) }, onCreate = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
-                Page.Group -> GroupScreen(posts = groupPosts, blockedAuthors = blockedCommunityAuthors, onBlockAuthor = { if (it !in blockedCommunityAuthors) blockedCommunityAuthors.add(it) }, canParticipate = !guestMode, onBack = ::back, onCreatePost = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
-                Page.CreatePost -> CreatePostScreen(categories = managedConfiguration.communityCategories, maximumImageBytes = managedConfiguration.maximumCommunityImageBytes, allowedImageMimeTypes = managedConfiguration.allowedCommunityImageMimeTypes, onBack = ::back, onPost = { post -> val remote = familyRemote; if (!isAuthenticatedUser || remote == null) { if (stack.getOrNull(stack.lastIndex - 1) == Page.Group) groupPosts.add(0, post) else communityPosts.add(0, post); back() } else coroutineScope.launch { runCatching { val imageId = post.imageUri?.let { uri -> val bytes = appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("The image could not be read"); val type = appContext.contentResolver.getType(uri) ?: "image/jpeg"; if (bytes.size > 5 * 1024 * 1024) error("Choose an image up to 5 MB."); remote.uploadImage(bytes, type) }; remote.createPost(post.body, post.category, imageId) }.onSuccess { saved -> serverCommunityPosts = listOf(post.copy(id = saved.id, authorUid = firebaseUser?.uid, moderationState = saved.moderationState, time = "Waiting for review")) + serverCommunityPosts; back() }.onFailure { error -> showNotice("Post not saved", error.message ?: "The community service did not accept this post.") } } })
+                Page.Community -> CommunityScreen(posts = serverCommunityPosts + communityPosts, comments = discussionComments, selectedPostId = selectedDiscussionId, categories = managedConfiguration.communityCategories, onSelectPost = { selectedDiscussionId = it }, onSendComment = ::sendComment, blockedAuthors = blockedCommunityAuthors, onBlockAuthor = { if (it !in blockedCommunityAuthors) blockedCommunityAuthors.add(it) }, onReport = { entry -> val remote = familyRemote; val id = entry.id; if (remote == null || id == null || !isAuthenticatedUser) showNotice("Report not sent", "Sample posts stay on this device. Sign in to report a stored post.") else coroutineScope.launch { runCatching { remote.report("post", id, "This post does not follow the community guidelines.") }.onSuccess { showNotice("Report sent", "The report was recorded for a moderator.") }.onFailure { error -> showNotice("Report not sent", error.message ?: "Try again when you are online.") } } }, onGroup = { if (guestMode) unavailableNotice = "Create a parent account to join a group." else go(Page.Group) }, onCreate = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
+                Page.Group -> GroupScreen(posts = groupPosts, serverPosts = serverCommunityPosts.filter { it.category == "discussions" && it.id != null }, comments = discussionComments, selectedPostId = selectedDiscussionId, blockedAuthors = blockedCommunityAuthors, onBlockAuthor = { if (it !in blockedCommunityAuthors) blockedCommunityAuthors.add(it) }, onSelectPost = { selectedDiscussionId = it }, onSendComment = ::sendComment, onSampleReply = { showNotice("Reply not sent", "Sample discussions stay on this device.") }, canParticipate = !guestMode, onBack = ::back, onCreatePost = { if (guestMode) unavailableNotice = "Create a parent account to join the discussion." else go(Page.CreatePost) })
+                Page.CreatePost -> CreatePostScreen(categories = managedConfiguration.communityCategories, initialCategory = if (stack.getOrNull(stack.lastIndex - 1) == Page.Group) "discussions" else null, maximumImageBytes = managedConfiguration.maximumCommunityImageBytes, allowedImageMimeTypes = managedConfiguration.allowedCommunityImageMimeTypes, onBack = ::back, onPost = { post -> val remote = familyRemote; if (!isAuthenticatedUser || remote == null) { if (stack.getOrNull(stack.lastIndex - 1) == Page.Group) groupPosts.add(0, post) else communityPosts.add(0, post); back() } else coroutineScope.launch { runCatching { val imageId = post.imageUri?.let { uri -> val bytes = appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("The image could not be read"); val type = appContext.contentResolver.getType(uri) ?: "image/jpeg"; if (bytes.size > 5 * 1024 * 1024) error("Choose an image up to 5 MB."); remote.uploadImage(bytes, type) }; remote.createPost(post.body, post.category, imageId) }.onSuccess { saved -> serverCommunityPosts = listOf(post.copy(id = saved.id, authorUid = firebaseUser?.uid, moderationState = saved.moderationState, time = "Waiting for review")) + serverCommunityPosts; back() }.onFailure { error -> showNotice("Post not saved", error.message ?: "The community service did not accept this post.") } } })
                 Page.Reviews -> ReviewsScreen(book = selectedBook, onBack = ::back, onSubmitReview = { rating, text -> val remote = familyRemote; if (isAuthenticatedUser && remote != null) coroutineScope.launch { runCatching { remote.createReview(selectedBook.id, rating, text) }.onSuccess { showNotice("Review submitted", "The review is waiting for moderation.") }.onFailure { error -> showNotice("Review not saved", error.message ?: "Try again when you are online.") } } })
                 Page.Offline -> OfflineScreen(products = offlineBookProducts, savedByProductId = offlineSavedByProductId, busyProductIds = offlineOperations, signedIn = isAuthenticatedUser, profilesLoading = offlineProfilesLoading, profileCount = ownedOfflineChildren.size, profileLoadError = offlineProfileLoadError, onBack = ::back, onBrowse = { stack.clear(); stack.add(Page.Library) }, onRetryProfiles = { offlineProfileRefreshKey++ }, onSave = ::requestSavePublishedBookOffline, onRemove = ::removePublishedBookOffline, onOpen = ::openAuthorizedBook)
                 Page.Parent -> ParentScreen(guest = guestMode, previewAccount = parentPreviewMode, authenticated = isAuthenticatedUser, parentName = previewParentName, parentEmail = authenticatedEmail ?: previewParentEmail, language = selectedLanguage, child = displayedChildren.firstOrNull { it.id == activeChildId }, onLanguage = { tag -> selectedLanguage = tag; activity?.let { AppLanguage.set(it, tag) } }, onProfiles = { if (guestMode) unavailableNotice = "Create a parent account to add child profiles." else go(Page.Profiles) }, onSubscription = { if (guestMode) unavailableNotice = "Create a parent account to explore Premium." else go(Page.Subscription) }, onOrders = { if (guestMode) unavailableNotice = "Sign in to view orders." else go(Page.Orders) }, onSupport = { go(Page.Support) }, onOffline = { if (guestMode) unavailableNotice = "Sign in to manage offline books." else go(Page.Offline) }, onPrivacy = { go(Page.Privacy) }, onUnavailable = { message -> if (guestMode || parentPreviewMode || isAuthenticatedUser) returnToWelcome(signOut = isAuthenticatedUser) else unavailableNotice = message }, onCreateAccount = { returnToWelcome(signOut = isAuthenticatedUser) })
@@ -1589,7 +1666,7 @@ private fun ReaderScreen(book: Book, mode: String, page: Int, bookmarked: Boolea
 }
 
 @Composable
-private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (Boolean) -> Unit, onPageAdvance: () -> Unit, onBack: () -> Unit, previewOnly: Boolean = false) {
+private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (Boolean) -> Unit, onPageAdvance: () -> Unit, onBack: () -> Unit, previewOnly: Boolean = false, approvedPage: ApprovedNarrationPage? = null, approvedAudio: java.io.File? = null, narrationNotice: String? = null) {
     val context = LocalContext.current
     var narrationState by remember { mutableStateOf(NarrationState()) }
     var isPlaying by remember { mutableStateOf(false) }
@@ -1598,7 +1675,17 @@ private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (
     DisposableEffect(narrationEngine) { onDispose { narrationEngine.close() } }
     val audioFocus = remember(context) { NarrationAudioFocus(context) { narrationEngine.stop(); isPlaying = false; focusMessage = "Narration paused because another app is using audio." } }
     DisposableEffect(audioFocus) { onDispose { audioFocus.abandon() } }
-    val narrationText = sampleStoryPages[(page - 1) % sampleStoryPages.size]
+    val timed = approvedPage != null
+    val blocked = !timed && narrationNotice != null
+    val narrationText = approvedPage?.text ?: if (blocked) "" else sampleStoryPages[(page - 1) % sampleStoryPages.size]
+    val player = remember(approvedAudio) {
+        approvedAudio?.let { file ->
+            runCatching { android.media.MediaPlayer().apply { setDataSource(file.absolutePath); prepare() } }.getOrNull()
+        }
+    }
+    DisposableEffect(player) { onDispose { player?.release() } }
+    var timelineMs by remember(approvedPage) { mutableLongStateOf(0L) }
+    var timedFinished by remember(approvedPage) { mutableStateOf(false) }
     val speedOptions = listOf("0.8×" to .8f, "1×" to 1f, "1.2×" to 1.2f, "1.5×" to 1.5f)
     var speed by remember { mutableStateOf("1×") }
     var selectedVoiceId by remember { mutableStateOf<String?>(null) }
@@ -1607,7 +1694,7 @@ private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (
     var resumeOffset by remember { mutableIntStateOf(0) }
     var showSettings by remember { mutableStateOf(false) }
     var lastAutoAdvancedPage by remember { mutableIntStateOf(page) }
-    val estimatedSeconds = (narrationText.split(Regex("\\s+")).size * .42f).toInt().coerceAtLeast(1)
+    val estimatedSeconds = if (timed && approvedPage != null) (approvedPage.durationMs / 1000).coerceAtLeast(1) else (narrationText.split(Regex("\\s+")).size * .42f).toInt().coerceAtLeast(1)
     val narrationError = focusMessage ?: narrationState.error
 
     fun speakFrom(offset: Int): Boolean {
@@ -1624,13 +1711,20 @@ private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (
     fun seekTo(value: Float) {
         val wasPlaying = isPlaying
         position = value.coerceIn(0f, 1f)
+        if (timed && approvedPage != null) {
+            timelineMs = (approvedPage.durationMs * position).toLong()
+            player?.seekTo(timelineMs.toInt())
+            fallbackRange = approvedPage.wordAt(timelineMs)?.let { it.start until it.end }
+            if (wasPlaying) isPlaying = true
+            return
+        }
         resumeOffset = (narrationText.length * position).toInt().coerceIn(0, narrationText.length)
         narrationEngine.stop()
         if (wasPlaying) isPlaying = speakFrom(resumeOffset)
     }
 
-    LaunchedEffect(narrationState.ready, page) {
-        if (narrationState.ready) {
+    LaunchedEffect(narrationState.ready, page, timed, blocked) {
+        if (!timed && !blocked && narrationState.ready) {
             resumeOffset = 0
             position = 0f
             lastAutoAdvancedPage = page
@@ -1640,9 +1734,9 @@ private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (
     LaunchedEffect(narrationState.activeRange) {
         narrationState.activeRange?.let { range -> position = range.last.coerceAtLeast(0).toFloat() / narrationText.length.coerceAtLeast(1) }
     }
-    LaunchedEffect(isPlaying, page, resumeOffset, narrationState.wordTimingAvailable, speed) {
-        fallbackRange = null
-        if (isPlaying && !narrationState.wordTimingAvailable) {
+    LaunchedEffect(isPlaying, page, resumeOffset, narrationState.wordTimingAvailable, speed, timed) {
+        if (!timed) fallbackRange = null
+        if (isPlaying && !timed && !narrationState.wordTimingAvailable) {
             val rate = speedOptions.firstOrNull { it.first == speed }?.second ?: 1f
             Regex("\\S+").findAll(narrationText)
                 .filter { it.range.last >= resumeOffset }
@@ -1653,7 +1747,46 @@ private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (
                 }
         }
     }
-    LaunchedEffect(narrationState.finished, page, autoplay) {
+    LaunchedEffect(isPlaying, approvedPage, speed, player) {
+        val pageTiming = approvedPage ?: return@LaunchedEffect
+        if (!isPlaying) {
+            player?.pause()
+            return@LaunchedEffect
+        }
+        val rate = speedOptions.firstOrNull { it.first == speed }?.second ?: 1f
+        if (player != null) {
+            runCatching { player.playbackParams = player.playbackParams.setSpeed(rate) }
+            if (player.currentPosition != timelineMs.toInt()) player.seekTo(timelineMs.toInt())
+            if (!player.isPlaying) player.start()
+        }
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        val startedTimeline = timelineMs
+        try {
+            while (isActive && isPlaying) {
+                val mediaMs = if (player != null) player.currentPosition.toLong() else startedTimeline + ((android.os.SystemClock.elapsedRealtime() - startedAt) * rate).toLong()
+                timelineMs = mediaMs
+                fallbackRange = pageTiming.wordAt(mediaMs)?.let { it.start until it.end }
+                position = (mediaMs.toFloat() / pageTiming.durationMs.coerceAtLeast(1)).coerceIn(0f, 1f)
+                if (mediaMs >= pageTiming.durationMs) {
+                    timedFinished = true
+                    isPlaying = false
+                    break
+                }
+                delay(50)
+            }
+        } finally {
+            player?.pause()
+        }
+    }
+    LaunchedEffect(timedFinished, page, autoplay) {
+        if (timedFinished) {
+            position = 1f
+            if (autoplay && !previewOnly && page < book.pageCount) onPageAdvance() else isPlaying = false
+            timedFinished = false
+        }
+    }
+    LaunchedEffect(narrationState.finished, page, autoplay, timed) {
+        if (timed) return@LaunchedEffect
         if (narrationState.finished && lastAutoAdvancedPage == page) {
             position = 1f
             if (autoplay && !previewOnly && page < book.pageCount) {
@@ -1687,21 +1820,32 @@ private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (
         Spacer(Modifier.height(PagesSpacing.Medium))
         CardSurface(Modifier.fillMaxWidth()) { MaterialText(text = highlightedText, style = MaterialTheme.typography.headlineSmall, lineHeight = 36.sp) }
         if (!narrationError.isNullOrBlank()) AppText(narrationError, color = PagesColors.Error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = PagesSpacing.Small))
+        else if (timed) AppText(if (approvedAudio != null) "Approved narration" else "Approved word timing", color = PagesColors.Forest, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = PagesSpacing.Small))
+        else if (blocked) AppText(narrationNotice ?: "", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = PagesSpacing.Small))
         else if (!narrationState.ready) AppText("Preparing your device’s voice…", color = PagesColors.Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = PagesSpacing.Small))
         Spacer(Modifier.height(PagesSpacing.CardContent))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(enabled = narrationState.ready, onClick = { seekTo((position - 10f / estimatedSeconds).coerceAtLeast(0f)) }) { Icon(Icons.Filled.Replay10, localizedAppCopy("Back 10 seconds"), tint = PagesColors.Forest) }
-            FilledIconButton(enabled = narrationState.ready, onClick = {
-                if (isPlaying) {
+            IconButton(enabled = timed || narrationState.ready, onClick = { seekTo((position - 10f / estimatedSeconds).coerceAtLeast(0f)) }) { Icon(Icons.Filled.Replay10, localizedAppCopy("Back 10 seconds"), tint = PagesColors.Forest) }
+            FilledIconButton(enabled = timed || (narrationState.ready && !blocked), onClick = {
+                if (timed) {
+                    if (isPlaying) {
+                        isPlaying = false
+                        audioFocus.abandon()
+                    } else if (audioFocus.request()) {
+                        focusMessage = null
+                        timedFinished = false
+                        isPlaying = true
+                    } else focusMessage = "Audio focus is unavailable. Pause other audio and try again."
+                } else if (isPlaying) {
                     resumeOffset = narrationState.activeRange?.first ?: resumeOffset
                     narrationEngine.stop()
                     isPlaying = false
                     audioFocus.abandon()
                 } else isPlaying = speakFrom(resumeOffset)
             }, modifier = Modifier.size(PagesSizes.NarrationButton), colors = IconButtonDefaults.filledIconButtonColors(containerColor = PagesColors.Forest)) { Icon(if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, localizedAppCopy(if (isPlaying) "Pause narration" else "Play narration"), modifier = Modifier.size(PagesSizes.NarrationPlayIcon)) }
-            IconButton(enabled = narrationState.ready, onClick = { seekTo((position + 10f / estimatedSeconds).coerceAtMost(1f)) }) { Icon(Icons.Filled.Forward10, localizedAppCopy("Forward 10 seconds"), tint = PagesColors.Forest) }
+            IconButton(enabled = timed || narrationState.ready, onClick = { seekTo((position + 10f / estimatedSeconds).coerceAtMost(1f)) }) { Icon(Icons.Filled.Forward10, localizedAppCopy("Forward 10 seconds"), tint = PagesColors.Forest) }
         }
-        Slider(value = position, onValueChange = { position = it }, onValueChangeFinished = { seekTo(position) }, enabled = narrationState.ready, colors = SliderDefaults.colors(thumbColor = PagesColors.Forest, activeTrackColor = PagesColors.Forest))
+        Slider(value = position, onValueChange = { position = it }, onValueChangeFinished = { seekTo(position) }, enabled = timed || narrationState.ready, colors = SliderDefaults.colors(thumbColor = PagesColors.Forest, activeTrackColor = PagesColors.Forest))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { AppText(durationLabel((position * estimatedSeconds).toInt()), color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall); AppText(durationLabel(estimatedSeconds), color = PagesColors.Muted, style = MaterialTheme.typography.labelSmall) }
         Spacer(Modifier.height(PagesSpacing.Small))
         if (previewOnly) AppText("One-page read-along preview", color = PagesColors.Forest, style = MaterialTheme.typography.labelMedium)
@@ -1720,9 +1864,9 @@ private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (
             Column {
                 AppText("Voice")
                 if (narrationState.voices.isEmpty()) AppText("System default", color = PagesColors.Muted)
-                else narrationState.voices.forEach { voice -> FilterChip(selected = selectedVoiceId == voice.id, onClick = { val resume = isPlaying; if (resume) resumeOffset = narrationState.activeRange?.first ?: resumeOffset; selectedVoiceId = voice.id; if (resume) isPlaying = speakFrom(resumeOffset) }, label = { AppText(voice.label) }) }
+                else narrationState.voices.forEach { voice -> FilterChip(selected = selectedVoiceId == voice.id, onClick = { if (!timed) { val resume = isPlaying; if (resume) resumeOffset = narrationState.activeRange?.first ?: resumeOffset; selectedVoiceId = voice.id; if (resume) isPlaying = speakFrom(resumeOffset) } }, label = { AppText(voice.label) }) }
                 Spacer(Modifier.height(PagesSpacing.CardContent)); AppText("Reading speed")
-                Row(horizontalArrangement = Arrangement.spacedBy(PagesSpacing.Small)) { speedOptions.forEach { (choice, _) -> FilterChip(selected = speed == choice, onClick = { val resume = isPlaying; if (resume) resumeOffset = narrationState.activeRange?.first ?: resumeOffset; speed = choice; if (resume) isPlaying = speakFrom(resumeOffset) }, label = { AppText(choice) }) } }
+                Row(horizontalArrangement = Arrangement.spacedBy(PagesSpacing.Small)) { speedOptions.forEach { (choice, _) -> FilterChip(selected = speed == choice, onClick = { val resume = isPlaying; if (!timed && resume) resumeOffset = narrationState.activeRange?.first ?: resumeOffset; speed = choice; if (!timed && resume) isPlaying = speakFrom(resumeOffset) }, label = { AppText(choice) }) } }
             }
         },
         confirmButton = { TextButton(onClick = { showSettings = false }) { AppText("Done") } }
@@ -1730,7 +1874,7 @@ private fun ListenScreen(book: Book, page: Int, autoplay: Boolean, onAutoplay: (
 }
 
 @Composable
-private fun CommunityScreen(posts: List<CommunityEntry>, categories: List<ManagedCategory>, blockedAuthors: List<String>, onBlockAuthor: (String) -> Unit, onReport: (CommunityEntry) -> Unit, onGroup: () -> Unit, onCreate: () -> Unit) {
+private fun CommunityScreen(posts: List<CommunityEntry>, comments: List<CommunityEntry>, selectedPostId: String?, categories: List<ManagedCategory>, blockedAuthors: List<String>, onBlockAuthor: (String) -> Unit, onReport: (CommunityEntry) -> Unit, onSelectPost: (String?) -> Unit, onSendComment: (String, String) -> Unit, onGroup: () -> Unit, onCreate: () -> Unit) {
     var showGuidelines by remember { mutableStateOf(false) }
     val language = LocalConfiguration.current.locales[0].language
     val activeCategories = categories.filter { it.enabled }.sortedBy { it.sortOrder }
@@ -1751,13 +1895,21 @@ private fun CommunityScreen(posts: List<CommunityEntry>, categories: List<Manage
         Row(horizontalArrangement = Arrangement.spacedBy(PagesSpacing.ControlGap)) { GroupTile("Raising Kind Kids", "312 parents", "🌱", onGroup); GroupTile("Bedtime Stories", "186 parents", "🌙", onGroup) }
         Spacer(Modifier.height(PagesSpacing.SectionGap)); SectionTitle("Recent posts")
         if (feedPosts.isEmpty()) EmptyState(Icons.Filled.Forum, "No posts in this feed yet", "Choose another topic or start a conversation.", "Create a post", onCreate)
-        feedPosts.forEach { post -> CommunityPost(post.author, post.time + if (post.id != null) " · ${post.moderationState ?: "stored"}" else if (post.author == "You") " · this device" else "", post.body, if (post.hasPhoto) "🖼️" else "", onGroup, imageUri = post.imageUri, onReport = { onReport(post) }, onBlock = { onBlockAuthor(post.author) }) }
+        var replyDraft by remember(selectedPostId) { mutableStateOf("") }
+        feedPosts.forEach { post ->
+            CommunityPost(post.author, post.time + if (post.id != null) " · ${post.moderationState ?: "stored"}" else if (post.author == "You") " · this device" else "", post.body, if (post.hasPhoto) "🖼️" else "", onGroup, imageUri = post.imageUri, onReport = { onReport(post) }, onBlock = { onBlockAuthor(post.author) })
+            val postId = post.id
+            if (postId != null && postId == selectedPostId) {
+                comments.forEach { comment -> CommunityPost(comment.author, comment.time + " · ${comment.moderationState ?: "stored"}", comment.body, "", null) }
+                OutlinedTextField(value = replyDraft, onValueChange = { replyDraft = it }, placeholder = { AppText("Write a reply…") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Tag), trailingIcon = { IconButton(onClick = { if (replyDraft.isNotBlank()) { onSendComment(postId, replyDraft.trim()); replyDraft = "" } }, enabled = replyDraft.isNotBlank()) { Icon(Icons.AutoMirrored.Filled.Send, localizedAppCopy("Send reply"), tint = PagesColors.Forest) } })
+            } else if (postId != null) TextButton(onClick = { onSelectPost(postId) }) { AppText("Reply") }
+        }
     }
-    if (showGuidelines) AlertDialog(onDismissRequest = { showGuidelines = false }, title = { AppText("Community guidelines") }, text = { AppText("Keep children’s names, schools, locations, and contact details private. Treat other families with kindness. Share only images you have permission to post, and report unsafe or inappropriate content. Reports and moderation are preview-only until the community service is connected.") }, confirmButton = { TextButton(onClick = { showGuidelines = false }) { AppText("Got it") } })
+    if (showGuidelines) AlertDialog(onDismissRequest = { showGuidelines = false }, title = { AppText("Community guidelines") }, text = { AppText("Keep children’s names, schools, locations, and contact details private. Treat other families with kindness. Share only images you have permission to post, and report unsafe or inappropriate content. Stored posts and replies wait for review. Sample posts stay on this device.") }, confirmButton = { TextButton(onClick = { showGuidelines = false }) { AppText("Got it") } })
 }
 
 @Composable
-private fun GroupScreen(posts: List<CommunityEntry>, blockedAuthors: List<String>, onBlockAuthor: (String) -> Unit, canParticipate: Boolean, onBack: () -> Unit, onCreatePost: () -> Unit) {
+private fun GroupScreen(posts: List<CommunityEntry>, serverPosts: List<CommunityEntry>, comments: List<CommunityEntry>, selectedPostId: String?, blockedAuthors: List<String>, onBlockAuthor: (String) -> Unit, onSelectPost: (String) -> Unit, onSendComment: (String, String) -> Unit, onSampleReply: (String) -> Unit, canParticipate: Boolean, onBack: () -> Unit, onCreatePost: () -> Unit) {
     var reply by remember { mutableStateOf("") }
     var selectedTab by remember { mutableStateOf("Discussion") }
     val replies = remember { mutableStateListOf<String>() }
@@ -1775,10 +1927,14 @@ private fun GroupScreen(posts: List<CommunityEntry>, blockedAuthors: List<String
                     SectionTitle("Latest discussion")
                     if ("Priya Sharma" !in blockedAuthors) CommunityPost("Priya Sharma", "3 days ago", "How do you talk to your kids about kindness when it’s hard? We read books that show different perspectives and then chat at bedtime.", "", null, onBlock = { onBlockAuthor("Priya Sharma") })
                     if ("James Carter" !in blockedAuthors) CommunityPost("James Carter", "2 days ago", "We use the ‘kind choices’ language after reading together. It gives our son a simple way to reflect.", "", null, onBlock = { onBlockAuthor("James Carter") })
-                    posts.filter { it.author !in blockedAuthors }.forEach { post -> CommunityPost(post.author, post.time + " · preview only", post.body, if (post.hasPhoto) "🖼️" else "", null, imageUri = post.imageUri, onBlock = { onBlockAuthor(post.author) }) }
-                    replies.forEach { message -> CommunityPost("You", "Just now", message, "", null) }
+                    serverPosts.filter { it.author !in blockedAuthors }.forEach { post ->
+                        CommunityPost(post.author, post.time + if (post.id == selectedPostId) " · selected" else " · ${post.moderationState ?: "stored"}", post.body, if (post.hasPhoto) "🖼️" else "", { val id = post.id; if (id != null) onSelectPost(id) }, imageUri = post.imageUri, onBlock = { onBlockAuthor(post.author) })
+                        if (post.id == selectedPostId) comments.forEach { comment -> CommunityPost(comment.author, comment.time + " · ${comment.moderationState ?: "stored"}", comment.body, "", null) }
+                    }
+                    posts.filter { it.author !in blockedAuthors }.forEach { post -> CommunityPost(post.author, post.time + " · this device", post.body, if (post.hasPhoto) "🖼️" else "", null, imageUri = post.imageUri, onBlock = { onBlockAuthor(post.author) }) }
+                    replies.forEach { message -> CommunityPost("You", "Just now · this device", message, "", null) }
                     OutlineButton("Start a discussion", Icons.Filled.Edit, onCreatePost)
-                    OutlinedTextField(value = reply, onValueChange = { reply = it }, placeholder = { AppText("Write a reply…") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Tag), trailingIcon = { IconButton(onClick = { if (reply.isNotBlank()) { replies.add(reply.trim()); reply = "" } }, enabled = reply.isNotBlank()) { Icon(Icons.AutoMirrored.Filled.Send, localizedAppCopy("Send reply"), tint = PagesColors.Forest) } })
+                    OutlinedTextField(value = reply, onValueChange = { reply = it }, placeholder = { AppText("Write a reply…") }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(PagesShapes.Tag), trailingIcon = { IconButton(onClick = { if (reply.isNotBlank()) { val message = reply.trim(); val postId = selectedPostId; if (postId == null) { replies.add(message); onSampleReply(message) } else onSendComment(postId, message); reply = "" } }, enabled = reply.isNotBlank()) { Icon(Icons.AutoMirrored.Filled.Send, localizedAppCopy("Send reply"), tint = PagesColors.Forest) } })
                 }
             }
             "Resources" -> {
@@ -1795,7 +1951,7 @@ private fun GroupScreen(posts: List<CommunityEntry>, blockedAuthors: List<String
 }
 
 @Composable
-private fun CreatePostScreen(categories: List<ManagedCategory>, maximumImageBytes: Long, allowedImageMimeTypes: Set<String>, onBack: () -> Unit, onPost: (CommunityEntry) -> Unit) {
+private fun CreatePostScreen(categories: List<ManagedCategory>, initialCategory: String?, maximumImageBytes: Long, allowedImageMimeTypes: Set<String>, onBack: () -> Unit, onPost: (CommunityEntry) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var post by remember { mutableStateOf("") }
@@ -1803,7 +1959,7 @@ private fun CreatePostScreen(categories: List<ManagedCategory>, maximumImageByte
     var photoError by remember { mutableStateOf<String?>(null) }
     val language = LocalConfiguration.current.locales[0].language
     val activeCategories = categories.filter { it.enabled }.sortedBy { it.sortOrder }
-    var selectedCategory by remember(activeCategories) { mutableStateOf(activeCategories.firstOrNull()?.id ?: "stories") }
+    var selectedCategory by remember(activeCategories, initialCategory) { mutableStateOf(initialCategory?.takeIf { id -> activeCategories.any { it.id == id } } ?: activeCategories.firstOrNull()?.id ?: "stories") }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {

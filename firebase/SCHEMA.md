@@ -47,7 +47,9 @@ This is a backend-neutral starting contract for development and review. Machine-
 
 ## Commerce
 
-- `orders/{orderId}`: owning uid, product/variant line items with quantity and price/currency snapshots, physical/in-app-reading fulfillment type, status, payment reference, delivery snapshot where needed, timestamps. Line item shape is in `contracts/v1.json`.
+- `orders/{orderId}`: owning uid, product/variant line items with quantity and price/currency snapshots, physical/in-app-reading fulfillment type, status, payment reference, delivery snapshot where needed, timestamps. Line item shape is in `contracts/v1.json`. A printed order stores `deliveryQuoteId`, `inventoryId`, and `fulfillmentState`. Client writes stay denied.
+- `deliveryQuotes/{quoteId}`: staff-published Bangladesh delivery fee in BDT minor units, status, and expiry. The checkout reads this quote. A client cannot choose the fee.
+- `inventory/{productId__variantId}`: server-owned available count for a printed variant. Checkout holds one unit only with an unexpired quote, and a failed payment releases that unit. A refund does not put stock back.
 - `discountCodeUsage/{codeHash}` and `discountCampaignUsage/{campaignId}/customers/{uidHash}`: server-only reserved/redeemed counts, respectively scoped to a code and to a customer within a campaign. Never make these documents client-readable. Pending payment settlement must convert reservations to redemptions or release them idempotently.
 - `paymentEvents/{eventId}`: provider event ID, order/subscription reference, verified result, received/processed timestamps. Server-only and idempotent by provider event ID.
 - `subscriptions/{subscriptionId}`: uid, provider, verified product/state/renewal dates, provider transaction references. Server-only writes.

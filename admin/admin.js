@@ -196,6 +196,8 @@ function bindEvents() {
   byId('promotionForm').addEventListener('submit', savePromotion);
   byId('discountCodeForm').addEventListener('submit', saveDiscountCode);
   byId('bookAssetForm').addEventListener('submit', stageBookAssets);
+  byId('deliveryQuoteForm').addEventListener('submit', publishDeliveryQuote);
+  byId('fulfillmentUpdateForm').addEventListener('submit', recordFulfillmentUpdate);
   byId('staffRoleForm').addEventListener('submit', event => {
     event.preventDefault();
     const form = event.currentTarget; const email = String(new FormData(form).get('email') || '').trim().toLowerCase();
@@ -779,6 +781,52 @@ function validateTimingJson(serialized) {
       throw new Error('Word timings must have ordered, non-overlapping startMs/endMs values.');
     }
     previousStart = word.startMs; previousEnd = word.endMs;
+  }
+}
+
+function setFulfillmentStatus(message, isError = false) {
+  const status = byId('fulfillmentStatus');
+  status.textContent = message;
+  status.style.color = isError ? '#9b2c2c' : '';
+}
+
+async function publishDeliveryQuote(event) {
+  event.preventDefault();
+  if (!firebaseClient?.auth.currentUser) {
+    setFulfillmentStatus('Sign in as a publisher or administrator before publishing a delivery quote.', true);
+    return;
+  }
+  const data = new FormData(event.currentTarget);
+  try {
+    const result = await callAdmin(firebaseClient, 'publishDeliveryQuote', {
+      region: 'BD',
+      currency: 'BDT',
+      feeMinor: Number(data.get('feeMinor')),
+      validForHours: Number(data.get('validForHours'))
+    });
+    setFulfillmentStatus(`Quote ${result.quoteId} is active until ${result.expiresAt}. Fee ${result.feeMinor} poisha.`);
+  } catch (error) {
+    setFulfillmentStatus(error.message || 'The delivery quote could not be published.', true);
+  }
+}
+
+async function recordFulfillmentUpdate(event) {
+  event.preventDefault();
+  if (!firebaseClient?.auth.currentUser) {
+    setFulfillmentStatus('Sign in as a publisher or administrator before updating an order.', true);
+    return;
+  }
+  const data = new FormData(event.currentTarget);
+  const trackingReference = String(data.get('trackingReference') || '').trim();
+  try {
+    const result = await callAdmin(firebaseClient, 'recordFulfillmentUpdate', {
+      orderId: String(data.get('orderId') || '').trim(),
+      status: data.get('status'),
+      trackingReference: trackingReference || null
+    });
+    setFulfillmentStatus(`Order ${result.orderId} is now ${result.fulfillmentState}${result.trackingReference ? ` · ${result.trackingReference}` : ''}.`);
+  } catch (error) {
+    setFulfillmentStatus(error.message || 'The fulfillment update could not be saved.', true);
   }
 }
 

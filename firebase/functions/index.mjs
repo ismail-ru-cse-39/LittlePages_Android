@@ -3,11 +3,14 @@ import { getAuth } from 'firebase-admin/auth';
 import { initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
+import { logger } from 'firebase-functions';
 import { defineSecret } from 'firebase-functions/params';
 import { HttpsError, onCall, onRequest } from 'firebase-functions/v2/https';
 import { createChildId, validateCategoryId, validateChildProfile, validateCommunityText, validateDeletionReason, validateReadingProgress, validateReview, MAX_CHILD_PROFILES } from './account-domain.mjs';
 import { describeBookAsset, rightsDeclaration } from './asset-domain.mjs';
-import { planPaymentTransition, verifyPaymentWebhook } from './payment-domain.mjs';
+import { planDeliveryQuote, planFulfillmentUpdate, planPhysicalCheckout } from './fulfillment-domain.mjs';
+import { operationFailure } from './operation-log.mjs';
+import { planPaymentTransition, planSubscriptionExpiry, verifyPaymentWebhook } from './payment-domain.mjs';
 import {
   bestAutomaticDiscount,
   chooseBestSingleDiscount,
@@ -36,10 +39,14 @@ const FUNCTION_REGION = 'asia-south1';
 const MAX_CODE_BATCH = 100;
 const ROLE_CAPABILITIES = Object.freeze({
   catalog_editor: new Set(['edit_configuration', 'validate_configuration', 'create_codes', 'manage_assets']),
-  publisher: new Set(['edit_configuration', 'validate_configuration', 'publish_configuration', 'rollback_configuration', 'create_codes', 'publish_codes', 'manage_assets', 'approve_assets']),
+  publisher: new Set(['edit_configuration', 'validate_configuration', 'publish_configuration', 'rollback_configuration', 'create_codes', 'publish_codes', 'manage_assets', 'approve_assets', 'manage_fulfillment']),
   moderator: new Set(['moderate_community']),
-  administrator: new Set(['edit_configuration', 'validate_configuration', 'approve_configuration', 'publish_configuration', 'rollback_configuration', 'create_codes', 'approve_codes', 'publish_codes', 'manage_staff', 'moderate_community', 'manage_assets', 'approve_assets'])
+  administrator: new Set(['edit_configuration', 'validate_configuration', 'approve_configuration', 'publish_configuration', 'rollback_configuration', 'create_codes', 'approve_codes', 'publish_codes', 'manage_staff', 'moderate_community', 'manage_assets', 'approve_assets', 'manage_fulfillment'])
 });
+
+function logFailure(operation, error) {
+  logger.error(operationFailure(operation, error));
+}
 
 function requireSignedIn(request) {
   if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Sign in to continue.');
@@ -475,6 +482,109 @@ export const resolveBookAccess = onCall(
       createdAt: FieldValue.serverTimestamp(), expiresAt: new Date(expiresAt)
     });
     return { bookId, childId, locale, contentVersion, url, expiresAt: new Date(expiresAt).toISOString(), sha256: asset.sha256, byteLength: asset.byteLength };
+  }
+);
+
+const AUDIO_TYPES = new Set(['audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/ogg', 'audio/wav']);
+
+async function signedAssetUrl(bookId, locale, contentVersion, type) {
+  const assetId = `${bookId}-${locale}-v${contentVersion}-${type}`;
+  const fileName = type === 'timings' ? 'timings.json' : 'narration';
+  const objectPath = `books/${bookId}/v${contentVersion}/${locale}/${fileName}`;
+  const maxBytes = type === 'timings' ? 5 * 1024 * 1024 : 100 * 1024 * 1024;
+  const assetSnapshot = await firestore.collection('books').doc(bookId).collection('assets').doc(assetId).get();
+  if (!assetSnapshot.exists) return null;
+  const asset = assetSnapshot.data();
+  const contentTypeAllowed = type === 'timings' ? asset.contentType === 'application/json' : AUDIO_TYPES.has(asset.contentType);
+  if (asset.type !== type || asset.reviewStatus !== 'approved' || asset.locale !== locale || asset.contentVersion !== contentVersion ||
+      asset.objectPath !== objectPath || !contentTypeAllowed || !Number.isSafeInteger(asset.byteLength) || asset.byteLength < 1 ||
+      asset.byteLength > maxBytes || typeof asset.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(asset.sha256)) {
+    throw new HttpsError('failed-precondition', 'The approved narration asset does not match its private file.');
+  }
+  const file = storage.bucket().file(objectPath);
+  let metadata;
+  try { [metadata] = await file.getMetadata(); }
+  catch { throw new HttpsError('not-found', 'The private narration file has not been uploaded.'); }
+  if (Number(metadata.size) !== asset.byteLength || metadata.contentType !== asset.contentType || metadata.metadata?.sha256 !== asset.sha256) {
+    throw new HttpsError('failed-precondition', 'The uploaded narration file does not match its approved asset record.');
+  }
+  const expiresAt = Date.now() + 5 * 60 * 1000;
+  const [url] = await file.getSignedUrl({ action: 'read', expires: expiresAt, version: 'v4' });
+  return { url, expiresAt: new Date(expiresAt).toISOString(), sha256: asset.sha256, byteLength: asset.byteLength, contentType: asset.contentType };
+}
+
+export const resolveNarrationAccess = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    try {
+      const uid = requireSignedIn(request);
+      const bookId = requiredString(request.data?.bookId, 'bookId', 80);
+      const childId = requiredString(request.data?.childId, 'childId', 80);
+      const locale = request.data?.locale;
+      if (!/^[a-z0-9_-]{2,80}$/.test(bookId) || !/^[A-Za-z0-9_-]{1,80}$/.test(childId) || !['en', 'bn'].includes(locale)) {
+        throw new HttpsError('invalid-argument', 'Choose a valid book, child profile, and supported locale.');
+      }
+      const userRef = firestore.collection('users').doc(uid);
+      const [userSnapshot, childSnapshot, manifestSnapshot] = await Promise.all([
+        userRef.get(), userRef.collection('children').doc(childId).get(), firestore.collection('publicConfiguration').doc('current').get()
+      ]);
+      if (!userSnapshot.exists || userSnapshot.get('state') !== 'active' || !childSnapshot.exists) {
+        throw new HttpsError('permission-denied', 'An active parent account and owned child profile are required.');
+      }
+      const catalogRevision = manifestSnapshot.get('catalogRevision');
+      const configurationRevision = manifestSnapshot.get('configurationRevision');
+      if (!Number.isSafeInteger(catalogRevision) || catalogRevision < 1 || !Number.isSafeInteger(configurationRevision) || configurationRevision < 1) {
+        throw new HttpsError('failed-precondition', 'The published catalogue is unavailable.');
+      }
+      const [productSnapshot, configurationSnapshot] = await Promise.all([
+        firestore.collection('catalogRevisions').doc(String(catalogRevision)).collection('products').doc(bookId).get(),
+        firestore.collection('configurationRevisions').doc(String(configurationRevision)).get()
+      ]);
+      const product = productSnapshot.data() ?? {};
+      const details = product.bookDetails ?? {};
+      const contentVersion = details.contentVersion ?? product.contentVersion;
+      if (!productSnapshot.exists || product.status !== 'published' || product.typeId !== 'book' || !Number.isSafeInteger(contentVersion) || contentVersion < 1 || !details.locales?.includes(locale)) {
+        throw new HttpsError('not-found', 'The published book is not available for the selected locale.');
+      }
+      const configuration = configurationSnapshot.get('configuration') ?? {};
+      const narrationRequiresSubscription = configuration.accessPolicy?.premiumNarrationRequiresActiveSubscription !== false;
+      const entitlements = await userRef.collection('entitlements').limit(40).get();
+      const now = Date.now();
+      const entitlementActive = (item, sources, productIds) => {
+        const validFrom = timestampMillis(item.validFrom);
+        const validUntil = timestampMillis(item.validUntil);
+        return item.state === 'active' && sources.includes(item.source) && productIds.includes(item.productId) &&
+          (validFrom == null || validFrom <= now) && (validUntil == null || validUntil > now);
+      };
+      const freeByCatalogue = details.access === 'free' || details.free === true;
+      const freeAccessAllowed = configuration.accessPolicy?.freeAccess === 'book_catalogue_flag';
+      if (!freeByCatalogue || !freeAccessAllowed) {
+        const accepted = details.access === 'premium' && configuration.accessPolicy?.premiumBooksRequireActiveSubscription === true
+          ? ['subscription', 'admin_grant'] : ['book_purchase', 'subscription', 'admin_grant'];
+        if (!entitlements.docs.some(snapshot => entitlementActive(snapshot.data(), accepted, [bookId]))) {
+          throw new HttpsError('permission-denied', 'A current book entitlement is required.');
+        }
+      }
+      if (narrationRequiresSubscription && !entitlements.docs.some(snapshot => entitlementActive(snapshot.data(), ['subscription', 'admin_grant'], ['premium', bookId]))) {
+        throw new HttpsError('permission-denied', 'An active subscription is required for narration.');
+      }
+      const timings = await signedAssetUrl(bookId, locale, contentVersion, 'timings');
+      if (!timings) throw new HttpsError('not-found', 'Approved narration timing is not available for this book.');
+      const audio = await signedAssetUrl(bookId, locale, contentVersion, 'narration');
+      await firestore.collection('bookAccessEvents').add({
+        uid, childId, bookId, locale, contentVersion, action: 'resolve_narration', createdAt: FieldValue.serverTimestamp()
+      });
+      return {
+        bookId, childId, locale, contentVersion,
+        timingsUrl: timings.url, timingsExpiresAt: timings.expiresAt, timingsSha256: timings.sha256, timingsByteLength: timings.byteLength,
+        audioUrl: audio?.url ?? null, audioExpiresAt: audio?.expiresAt ?? null, audioSha256: audio?.sha256 ?? null,
+        audioByteLength: audio?.byteLength ?? null, audioContentType: audio?.contentType ?? null
+      };
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      logFailure('resolveNarrationAccess', error);
+      throw new HttpsError('internal', 'Narration access could not be checked.');
+    }
   }
 );
 
@@ -1117,7 +1227,8 @@ export const reserveDiscountedOrder = onCall(
     const hmacSecret = discountHmacKey.value();
     if (codeInput && (!hmacSecret || hmacSecret.length < 32)) throw new HttpsError('failed-precondition', 'The server discount key is not configured.');
     const codeHash = codeInput ? digestDiscountCode(codeInput, hmacSecret) : null;
-    const requestFingerprint = createHash('sha256').update(`${productId}:${variantId}:${codeHash ?? ''}`).digest('hex');
+    const deliveryQuoteId = typeof request.data?.deliveryQuoteId === 'string' ? request.data.deliveryQuoteId.trim() : '';
+    const requestFingerprint = createHash('sha256').update(`${productId}:${variantId}:${codeHash ?? ''}:${deliveryQuoteId}`).digest('hex');
     const codeRef = codeHash ? firestore.collection('discountCodes').doc(codeHash) : null;
     const usageRef = codeHash ? firestore.collection('discountCodeUsage').doc(codeHash) : null;
     const customerHash = createHash('sha256').update(uid).digest('hex');
@@ -1154,7 +1265,26 @@ export const reserveDiscountedOrder = onCall(
         const variant = product.variants?.find(item => item.id === variantId);
         if (product.status !== 'published' || !variant) throw new HttpsError('failed-precondition', 'The selected product option is not available.');
         if (variant.stockState === 'out_of_stock') throw new HttpsError('failed-precondition', 'The selected option is out of stock.');
+        if (variant.stockState === 'preorder') throw new HttpsError('failed-precondition', 'Preorder fulfillment is not available.');
         if (!Number.isSafeInteger(variant.priceMinor) || variant.priceMinor < 1 || variant.currency !== 'BDT') throw new HttpsError('failed-precondition', 'The product price is invalid.');
+        let physicalPlan = null;
+        let inventoryRef = null;
+        if (variant.stockState === 'in_stock') {
+          if (request.data?.region !== 'BD' || !deliveryQuoteId || deliveryQuoteId.includes('/') || deliveryQuoteId.length > 80 || productId.includes('/') || variantId.includes('/')) {
+            throw new HttpsError('failed-precondition', 'A confirmed Bangladesh delivery quote is required before reserving a printed book.');
+          }
+          const quoteRef = firestore.collection('deliveryQuotes').doc(deliveryQuoteId);
+          inventoryRef = firestore.collection('inventory').doc(`${productId}__${variantId}`);
+          const [quoteSnapshot, inventorySnapshot] = await Promise.all([transaction.get(quoteRef), transaction.get(inventoryRef)]);
+          physicalPlan = planPhysicalCheckout({
+            variant,
+            region: 'BD',
+            quote: quoteSnapshot.exists ? quoteSnapshot.data() : null,
+            available: inventorySnapshot.exists ? inventorySnapshot.get('available') : variant.stockQuantity,
+            now
+          });
+          if (!physicalPlan.ok) throw new HttpsError('failed-precondition', physicalPlan.reason);
+        }
 
         const promotions = promotionsSnapshot.docs.map(snapshot => snapshot.data());
         if (promotions.length > 100) throw new HttpsError('failed-precondition', 'The published catalogue has too many simultaneous promotion records to price safely.');
@@ -1213,6 +1343,7 @@ export const reserveDiscountedOrder = onCall(
         const chosenCode = Boolean(codeCandidate && chosen?.codeRecord?.id === codeRecord?.id);
         const finalPriceMinor = chosen?.finalPriceMinor ?? variant.priceMinor;
         const discountMinor = chosen?.discountMinor ?? 0;
+        const deliveryFeeMinor = physicalPlan?.deliveryFeeMinor ?? 0;
         const order = {
           customerUid: uid,
           status: 'pending_payment',
@@ -1220,15 +1351,23 @@ export const reserveDiscountedOrder = onCall(
           currency: 'BDT',
           subtotalMinor: variant.priceMinor,
           discountMinor,
-          totalMinor: finalPriceMinor,
-          lineItems: [{ productId, variantId, quantity: 1, unitPriceMinor: variant.priceMinor, currency: 'BDT' }],
-          grantsDigitalAccess: variantId === 'in-app',
+          deliveryFeeMinor,
+          totalMinor: finalPriceMinor + deliveryFeeMinor,
+          lineItems: [{ productId, variantId, quantity: 1, unitPriceMinor: variant.priceMinor, currency: 'BDT', fulfillment: physicalPlan ? 'physical' : 'in_app_reading' }],
+          grantsDigitalAccess: variantId === 'in-app' && !physicalPlan,
+          fulfillmentType: physicalPlan ? 'physical' : 'digital',
+          fulfillmentState: physicalPlan ? physicalPlan.fulfillmentState : null,
+          deliveryQuoteId: physicalPlan ? deliveryQuoteId : null,
+          inventoryId: physicalPlan ? inventoryRef.id : null,
           appliedDiscount: chosenCode ? { kind: 'code', campaignId: codeRecord.campaignId, codeId: codeRecord.id, codeHash, discountMinor } : chosen?.promotion ? { kind: 'automatic', promotionId: chosen.promotion.id, discountMinor } : null,
           discountReservationState: chosenCode ? 'reserved' : null,
           createdAt: FieldValue.serverTimestamp(),
           idempotencyDigest,
           requestFingerprint
         };
+        if (physicalPlan) {
+          transaction.set(inventoryRef, { productId, variantId, available: physicalPlan.availableAfter, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+        }
         transaction.create(orderRef, order);
         if (chosenCode) {
           transaction.set(campaignRef, { reservedRedemptionCount: FieldValue.increment(1) }, { merge: true });
@@ -1240,7 +1379,8 @@ export const reserveDiscountedOrder = onCall(
       });
     } catch (error) {
       if (error instanceof HttpsError) throw error;
-      throw new HttpsError('aborted', 'The order could not be reserved. Retry with the same idempotency key.', { cause: error?.message });
+      logFailure('reserveDiscountedOrder', error);
+      throw new HttpsError('aborted', 'The order could not be reserved. Retry with the same idempotency key.');
     }
   }
 );
@@ -1411,20 +1551,26 @@ export const createCommunityPost = onCall(
 export const createCommunityComment = onCall(
   { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 10 },
   async request => {
-    const uid = requireSignedIn(request);
-    const postId = requiredString(request.data?.postId, 'postId', 80);
-    const bodyError = validateCommunityText(request.data?.body, 'Comment');
-    if (postId.includes('/') || bodyError) throw new HttpsError('invalid-argument', bodyError || 'Choose a valid post.');
-    await requireActiveParent(uid);
-    const post = await firestore.collection('posts').doc(postId).get();
-    if (!post.exists || !['visible', 'pending'].includes(post.get('moderationState')) || (post.get('moderationState') === 'pending' && post.get('uid') !== uid)) {
-      throw new HttpsError('not-found', 'That post is not available for replies.');
+    try {
+      const uid = requireSignedIn(request);
+      const postId = requiredString(request.data?.postId, 'postId', 80);
+      const bodyError = validateCommunityText(request.data?.body, 'Comment');
+      if (postId.includes('/') || bodyError) throw new HttpsError('invalid-argument', bodyError || 'Choose a valid post.');
+      await requireActiveParent(uid);
+      const post = await firestore.collection('posts').doc(postId).get();
+      if (!post.exists || !['visible', 'pending'].includes(post.get('moderationState')) || (post.get('moderationState') === 'pending' && post.get('uid') !== uid)) {
+        throw new HttpsError('not-found', 'That post is not available for replies.');
+      }
+      const commentRef = firestore.collection('comments').doc(communityId('comment'));
+      await commentRef.set({
+        uid, postId, body: request.data.body.trim(), moderationState: 'pending', createdAt: FieldValue.serverTimestamp()
+      });
+      return { id: commentRef.id, moderationState: 'pending' };
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      logFailure('createCommunityComment', error);
+      throw new HttpsError('internal', 'The reply could not be saved.');
     }
-    const commentRef = firestore.collection('comments').doc(communityId('comment'));
-    await commentRef.set({
-      uid, postId, body: request.data.body.trim(), moderationState: 'pending', createdAt: FieldValue.serverTimestamp()
-    });
-    return { id: commentRef.id, moderationState: 'pending' };
   }
 );
 
@@ -1450,6 +1596,36 @@ export const listCommunityPosts = onCall(
       });
     });
     return { posts: [...posts.values()] };
+  }
+);
+
+export const listCommunityComments = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 10 },
+  async request => {
+    try {
+      const uid = requireSignedIn(request);
+      const postId = requiredString(request.data?.postId, 'postId', 80);
+      if (postId.includes('/') || !/^[A-Za-z0-9_-]{1,80}$/.test(postId)) throw new HttpsError('invalid-argument', 'Choose a valid post.');
+      await requireActiveParent(uid);
+      const post = await firestore.collection('posts').doc(postId).get();
+      const visibleToCaller = post.exists && post.get('moderationState') !== 'removed' &&
+        (post.get('moderationState') === 'visible' || post.get('uid') === uid);
+      if (!visibleToCaller) throw new HttpsError('not-found', 'That post is not available for replies.');
+      const comments = await firestore.collection('comments').where('postId', '==', postId).limit(50).get();
+      return {
+        comments: comments.docs.filter(snapshot => {
+          const state = snapshot.get('moderationState');
+          return state === 'visible' || (snapshot.get('uid') === uid && state !== 'removed');
+        }).map(snapshot => ({
+          id: snapshot.id, postId, body: snapshot.get('body') ?? '', authorUid: snapshot.get('uid'),
+          moderationState: snapshot.get('moderationState') ?? 'pending'
+        }))
+      };
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      logFailure('listCommunityComments', error);
+      throw new HttpsError('internal', 'Replies could not be loaded.');
+    }
   }
 );
 
@@ -1654,15 +1830,22 @@ async function applyVerifiedPayment(event) {
     }
     const entitlementRef = firestore.collection('users').doc(order.customerUid).collection('entitlements').doc(orderRef.id);
     if (plan.entitlement === 'revoke') await transaction.get(entitlementRef);
+    const inventorySnapshot = plan.stock === 'release' && typeof order.inventoryId === 'string' && order.inventoryId && !order.inventoryId.includes('/')
+      ? await transaction.get(firestore.collection('inventory').doc(order.inventoryId))
+      : null;
+    const releasedStock = inventorySnapshot?.exists && Number.isSafeInteger(inventorySnapshot.get('available'));
     transaction.create(eventRef, { ...event, orderId: orderRef.id, appliedAt: FieldValue.serverTimestamp(), plan: plan.orderStatus });
     transaction.set(orderRef, {
       status: plan.orderStatus,
       paymentStatus: plan.paymentStatus,
       settledProviderEventId: `${event.provider}:${event.providerEventId}`,
       discountReservationState: plan.reservation === 'settle' ? 'settled' : plan.reservation === 'release' ? 'released' : order.discountReservationState ?? null,
-      fulfillmentState: plan.fulfillment,
+      fulfillmentState: plan.stock === 'release' && !releasedStock ? 'stock_release_missing' : plan.fulfillment,
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true });
+    if (releasedStock) {
+      transaction.set(inventorySnapshot.ref, { available: inventorySnapshot.get('available') + 1, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    }
     if (codeRefs && plan.reservation === 'release') {
       transaction.set(codeRefs.campaign, { reservedRedemptionCount: FieldValue.increment(-1) }, { merge: true });
       transaction.set(codeRefs.usage, { reservedCount: FieldValue.increment(-1) }, { merge: true });
@@ -1691,6 +1874,91 @@ async function applyVerifiedPayment(event) {
   });
 }
 
+async function applySubscriptionExpiry(event) {
+  const subscriptionRef = firestore.collection('subscriptions').doc(event.subscriptionId);
+  const eventRef = firestore.collection('paymentEvents').doc(createHash('sha256').update(`${event.provider}:${event.providerEventId}`).digest('hex'));
+  const now = Date.now();
+  return firestore.runTransaction(async transaction => {
+    const existingEvent = await transaction.get(eventRef);
+    const subscriptionSnapshot = await transaction.get(subscriptionRef);
+    const subscription = subscriptionSnapshot.exists ? subscriptionSnapshot.data() : null;
+    if (existingEvent.exists) return { status: 200, body: { subscriptionId: event.subscriptionId, duplicate: true } };
+    const plan = planSubscriptionExpiry(subscription, event, now);
+    if (plan.action === 'reject') return { status: plan.status, body: { error: plan.reason } };
+    if (plan.action === 'noop') return { status: 200, body: { subscriptionId: event.subscriptionId, duplicate: true } };
+    const entitlements = await transaction.get(
+      firestore.collection('users').doc(plan.uid).collection('entitlements').where('source', '==', 'subscription').limit(41)
+    );
+    if (entitlements.size > 40) return { status: 409, body: { error: 'Too many subscription entitlements to expire in one event.' } };
+    const matching = entitlements.docs.filter(snapshot => snapshot.get('productId') === plan.productId);
+    transaction.create(eventRef, { provider: event.provider, providerEventId: event.providerEventId, type: event.type, subscriptionId: event.subscriptionId, occurredAt: event.occurredAt, appliedAt: FieldValue.serverTimestamp() });
+    transaction.set(subscriptionRef, {
+      state: 'expired', settledProviderEventId: `${event.provider}:${event.providerEventId}`, expiredAt: event.occurredAt, updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true });
+    matching.forEach(snapshot => transaction.set(snapshot.ref, { state: 'revoked', updatedAt: FieldValue.serverTimestamp() }, { merge: true }));
+    return { status: 200, body: { subscriptionId: event.subscriptionId, status: 'expired', revokedEntitlements: matching.length } };
+  });
+}
+
+export const publishDeliveryQuote = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 5 },
+  async request => {
+    try {
+      const uid = requireSignedIn(request);
+      assertRoleCapability(await firestore.collection('adminRoles').doc(uid).get(), 'manage_fulfillment');
+      const now = Date.now();
+      const planned = planDeliveryQuote({
+        region: request.data?.region, currency: request.data?.currency, feeMinor: request.data?.feeMinor, validForHours: request.data?.validForHours
+      }, now);
+      if (!planned.ok) throw new HttpsError('invalid-argument', planned.reason);
+      const { ok: _accepted, ...quote } = planned;
+      const quoteRef = firestore.collection('deliveryQuotes').doc();
+      const auditRef = firestore.collection('adminAuditEvents').doc();
+      await firestore.runTransaction(async transaction => {
+        assertRoleCapability(await transaction.get(firestore.collection('adminRoles').doc(uid)), 'manage_fulfillment');
+        transaction.create(quoteRef, { ...quote, createdBy: uid, createdAt: FieldValue.serverTimestamp() });
+        transaction.create(auditRef, auditRecord({ actorUid: uid, action: 'publish_delivery_quote', targetId: quoteRef.id, details: { feeMinor: planned.feeMinor, expiresAt: planned.expiresAt } }));
+      });
+      return { quoteId: quoteRef.id, feeMinor: planned.feeMinor, currency: 'BDT', expiresAt: planned.expiresAt };
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      logFailure('publishDeliveryQuote', error);
+      throw new HttpsError('internal', 'The delivery quote could not be published.');
+    }
+  }
+);
+
+export const recordFulfillmentUpdate = onCall(
+  { region: FUNCTION_REGION, enforceAppCheck: true, maxInstances: 5 },
+  async request => {
+    try {
+      const uid = requireSignedIn(request);
+      const orderId = requiredString(request.data?.orderId, 'orderId', 64);
+      if (!/^[a-f0-9]{64}$/.test(orderId)) throw new HttpsError('invalid-argument', 'The order ID is invalid.');
+      const orderRef = firestore.collection('orders').doc(orderId);
+      const auditRef = firestore.collection('adminAuditEvents').doc();
+      const result = await firestore.runTransaction(async transaction => {
+        const [roleSnapshot, orderSnapshot] = await Promise.all([
+          transaction.get(firestore.collection('adminRoles').doc(uid)), transaction.get(orderRef)
+        ]);
+        assertRoleCapability(roleSnapshot, 'manage_fulfillment');
+        const planned = planFulfillmentUpdate(orderSnapshot.exists ? orderSnapshot.data() : null, request.data ?? {});
+        if (!planned.ok) throw new HttpsError('failed-precondition', planned.reason);
+        transaction.set(orderRef, {
+          fulfillmentState: planned.fulfillmentState, trackingReference: planned.trackingReference, updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true });
+        transaction.create(auditRef, auditRecord({ actorUid: uid, action: 'record_fulfillment_update', targetId: orderId, details: { fulfillmentState: planned.fulfillmentState, trackingReference: planned.trackingReference } }));
+        return { fulfillmentState: planned.fulfillmentState, trackingReference: planned.trackingReference };
+      });
+      return { orderId, fulfillmentState: result.fulfillmentState, trackingReference: result.trackingReference };
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      logFailure('recordFulfillmentUpdate', error);
+      throw new HttpsError('internal', 'The fulfillment update could not be saved.');
+    }
+  }
+);
+
 export const paymentWebhook = onRequest(
   { region: FUNCTION_REGION, secrets: [paymentWebhookSecret], maxInstances: 10 },
   async (request, response) => {
@@ -1698,9 +1966,12 @@ export const paymentWebhook = onRequest(
     const verdict = verifyPaymentWebhook(request.rawBody?.toString('utf8') ?? '', request.get('x-littlepages-signature') ?? '', paymentWebhookSecret.value());
     if (!verdict.ok) { response.status(verdict.status).json({ error: verdict.reason }); return; }
     try {
-      const result = await applyVerifiedPayment(verdict.event);
+      const result = verdict.event.type === 'subscription_expired'
+        ? await applySubscriptionExpiry(verdict.event)
+        : await applyVerifiedPayment(verdict.event);
       response.status(result.status).json(result.body);
-    } catch {
+    } catch (error) {
+      logFailure('paymentWebhook', error);
       response.status(500).json({ error: 'The payment event could not be applied.' });
     }
   }

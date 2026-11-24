@@ -4,9 +4,12 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { createChildId, validateChildProfile, validateReadingProgress, validateReview } from '../account-domain.mjs';
+import { createChildId, validateChildProfile, validateCommunityText, validateReadingProgress, validateReview } from '../account-domain.mjs';
 import { describeBookAsset, rightsDeclaration } from '../asset-domain.mjs';
-import { planPaymentTransition, verifyPaymentWebhook } from '../payment-domain.mjs';
+import { planDeliveryQuote, planFulfillmentUpdate, planPhysicalCheckout } from '../fulfillment-domain.mjs';
+import { parseNarrationTimings } from '../narration-domain.mjs';
+import { operationFailure } from '../operation-log.mjs';
+import { planPaymentTransition, planSubscriptionExpiry, verifyPaymentWebhook } from '../payment-domain.mjs';
 import { SUPPORTED_BLOCK_TYPES } from '../publishing-domain.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -34,11 +37,14 @@ test('child profile ids and age bands stay parent-safe', () => {
   assert.match(validateChildProfile({ nickname: 'Emma', ageBand: '4 years old' }), /age bands/);
 });
 
-test('reading progress and reviews reject unsafe values', () => {
+test('reading progress, reviews, and replies reject unsafe values', () => {
   assert.equal(validateReadingProgress({ bookId: 'brave-little-fox', page: 3, bookmarks: [3, 8] }), null);
   assert.match(validateReadingProgress({ bookId: 'brave-little-fox', page: 0, bookmarks: [] }), /page/);
   assert.equal(validateReview({ bookId: 'brave-little-fox', rating: 5, body: 'A gentle story.' }), null);
   assert.match(validateReview({ bookId: 'brave-little-fox', rating: 6, body: 'A gentle story.' }), /rating/);
+  assert.equal(validateCommunityText('A kind reply for this discussion.', 'Comment'), null);
+  assert.match(validateCommunityText('   ', 'Comment'), /Comment/);
+  assert.match(validateCommunityText('x'.repeat(2001), 'Comment'), /2000/);
 });
 
 test('book asset paths match the private reader contract', () => {
@@ -89,6 +95,69 @@ test('refunds revoke access and failed payments release a reservation', () => {
     provider: 'stub', providerEventId: 'event-0004', type: 'payment_succeeded',
     orderId: 'a'.repeat(64), amountMinor: 45000, currency: 'BDT', occurredAt: new Date(now).toISOString()
   }, now).entitlement, 'none');
+});
+
+test('printed stock is reserved only with a current Bangladesh delivery quote', () => {
+  const now = Date.now();
+  const variant = { stockState: 'in_stock', stockQuantity: 2 };
+  const quote = { status: 'active', region: 'BD', currency: 'BDT', feeMinor: 8000, expiresAt: new Date(now + 60_000).toISOString() };
+  const reserved = planPhysicalCheckout({ variant, region: 'BD', quote, available: 2, now });
+  assert.equal(reserved.ok, true);
+  assert.equal(reserved.availableAfter, 1);
+  assert.equal(reserved.deliveryFeeMinor, 8000);
+  assert.equal(planPhysicalCheckout({ variant, region: 'BD', quote, available: 0, now }).ok, false);
+  assert.equal(planPhysicalCheckout({ variant, region: 'US', quote, available: 2, now }).ok, false);
+  assert.match(planPhysicalCheckout({ variant, region: 'BD', quote: { ...quote, expiresAt: new Date(now - 1000).toISOString() }, available: 2, now }).reason, /expired/);
+  const published = planDeliveryQuote({ region: 'BD', currency: 'BDT', feeMinor: 8000, validForHours: 4 }, now);
+  assert.equal(published.ok, true);
+  assert.equal(planDeliveryQuote({ region: 'BD', currency: 'BDT', feeMinor: -1, validForHours: 4 }, now).ok, false);
+  const paid = { fulfillmentType: 'physical', paymentStatus: 'succeeded', fulfillmentState: 'paid_awaiting_fulfillment' };
+  const handed = planFulfillmentUpdate(paid, { status: 'handed_to_carrier', trackingReference: 'BD-100' });
+  assert.equal(handed.fulfillmentState, 'handed_to_carrier');
+  assert.equal(planFulfillmentUpdate(paid, { status: 'delivered', trackingReference: 'BD-100' }).ok, false);
+  assert.equal(planFulfillmentUpdate({ ...paid, paymentStatus: 'pending' }, { status: 'handed_to_carrier', trackingReference: 'BD-100' }).ok, false);
+});
+
+test('subscription expiry revokes only an active subscription and keeps book purchases untouched', () => {
+  const now = Date.now();
+  const event = {
+    provider: 'stub', providerEventId: 'sub-event-1', type: 'subscription_expired',
+    subscriptionId: 'sub-premium', occurredAt: new Date(now).toISOString()
+  };
+  const signed = signedEvent(event);
+  assert.equal(verifyPaymentWebhook(signed.raw, signed.signature, secret).ok, true);
+  const withOrder = signedEvent({ ...event, orderId: 'a'.repeat(64), amountMinor: 100 });
+  assert.equal(verifyPaymentWebhook(withOrder.raw, withOrder.signature, secret).ok, false);
+  const plan = planSubscriptionExpiry({ state: 'active', provider: 'stub', uid: 'parent-1', productId: 'premium' }, event, now);
+  assert.equal(plan.action, 'expire');
+  assert.equal(plan.productId, 'premium');
+  assert.equal(planSubscriptionExpiry({ state: 'expired', provider: 'stub', uid: 'parent-1', productId: 'premium', settledProviderEventId: 'stub:sub-event-1' }, event, now).action, 'noop');
+  assert.equal(planSubscriptionExpiry({ state: 'active', provider: 'other', uid: 'parent-1', productId: 'premium' }, event, now).action, 'reject');
+  const failedPhysical = planPaymentTransition({
+    ...paidOrder, grantsDigitalAccess: false, fulfillmentType: 'physical'
+  }, {
+    provider: 'stub', providerEventId: 'event-0099', type: 'payment_failed',
+    orderId: 'a'.repeat(64), amountMinor: 45000, currency: 'BDT', occurredAt: new Date(now).toISOString()
+  }, now);
+  assert.equal(failedPhysical.stock, 'release');
+  assert.equal(planPaymentTransition(paidOrder, {
+    provider: 'stub', providerEventId: 'event-0098', type: 'payment_failed',
+    orderId: 'a'.repeat(64), amountMinor: 45000, currency: 'BDT', occurredAt: new Date(now).toISOString()
+  }, now).stock, 'none');
+});
+
+test('approved narration timings reject overlapping or out-of-range words', () => {
+  const parsed = parseNarrationTimings({
+    schemaVersion: 1,
+    pages: [{ page: 1, text: 'Hello world', words: [{ start: 0, end: 5, startMs: 0, endMs: 400 }, { start: 6, end: 11, startMs: 400, endMs: 900 }] }]
+  });
+  assert.equal(parsed.pages[0].words.length, 2);
+  assert.throws(() => parseNarrationTimings({ schemaVersion: 1, pages: [{ page: 1, text: 'Hello', words: [{ start: 0, end: 5, startMs: 0, endMs: 10 }, { start: 0, end: 5, startMs: 5, endMs: 20 }] }] }), /move forward/);
+  assert.throws(() => parseNarrationTimings({ schemaVersion: 1, pages: [{ page: 1, text: 'Hello', words: [{ start: 0, end: 8, startMs: 0, endMs: 10 }] }] }), /range/);
+  const failure = operationFailure('paymentWebhook', { code: 'aborted', message: 'x'.repeat(400) });
+  assert.equal(failure.event, 'littlepages.operation_failed');
+  assert.equal(failure.message.length, 300);
+  assert.equal(Object.hasOwn(failure, 'stack'), false);
 });
 
 test('Android, website, and admin use the same page block contract', () => {
